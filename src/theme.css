@@ -1,0 +1,61 @@
+/*
+ * Дизайн-токены Metricks.
+ * Тёмный фон, всё остальное — фиолетовое.
+ * Компоненты берут цвета отсюда, хардкод в разметке запрещён.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Поверхности */
+  --bg: #0b0a12;
+  --bg-elevated: #100e1a;
+  --surface: #16141f;
+  --surface-2: #1e1b2e;
+  --surface-3: #262138;
+  --line: #2a2540;
+  --line-soft: #221d36;
+
+  /* Фиолетовые акценты */
+  --purple-100: #ede9fe;
+  --purple-200: #ddd6fe;
+  --purple-300: #c4b5fd;
+  --purple-400: #a855f7;
+  --purple-500: #8b5cf6;
+  --purple-600: #7c3aed;
+  --purple-700: #6d28d9;
+  --purple-900: #4c1d95;
+
+  /* Текст */
+  --text: #ede9fe;
+  --text-dim: #c9c1ee;
+  --muted: #9f95c0;
+  --muted-dim: #6f6790;
+
+  /* Палитра серий графиков — только фиолетовые оттенки */
+  --chart-1: #c084fc;
+  --chart-2: #a855f7;
+  --chart-3: #8b5cf6;
+  --chart-4: #6d28d9;
+  --chart-5: #d8b4fe;
+  --chart-6: #7e22ce;
+
+  /* Скругления */
+  --r-pill: 999px;
+  --r-xl: 28px;
+  --r-lg: 22px;
+  --r-md: 14px;
+  --r-sm: 10px;
+
+  /* Тени и свечения */
+  --shadow-card: 0 24px 48px -28px rgba(76, 29, 149, 0.95);
+  --shadow-glow: 0 0 0 1px rgba(168, 85, 247, 0.16), 0 0 40px -14px rgba(124, 58, 237, 0.55);
+  --shadow-inset: inset 0 1px 0 rgba(196, 181, 253, 0.07);
+
+  --accent-gradient: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+
+  --font-sans:
+    'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+}
