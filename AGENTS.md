@@ -1,6 +1,6 @@
 # Metricks — правила проекта
 
-Десктопный дашборд метрик. Tauri v2 (Rust) + React 18 + TypeScript + Vite.
+Десктопный дашборд метрик. Tauri v2 (Rust) + React 19 + TypeScript + Vite.
 Графики — собственные SVG-компоненты, без chart-библиотек.
 
 ## Git

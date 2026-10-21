@@ -1,0 +1,3 @@
+# Сборка Rust
+/target
+/gen/schemas
