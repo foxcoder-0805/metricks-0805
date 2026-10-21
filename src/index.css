@@ -144,6 +144,25 @@ button {
   color: var(--purple-400);
 }
 
+.pill select {
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pill select:focus {
+  outline: none;
+}
+
+.pill select option {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
