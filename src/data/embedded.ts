@@ -115,7 +115,7 @@ function buildSeries(range: Range): Series {
     series: [
       { id: 'telegram', label: 'Telegram', points: wave(len, 64, 16, 4) },
       { id: 'opencode', label: 'OpenCode', points: wave(len, 42, 12, 3) },
-      { id: 'github', label: 'GitHub', points: wave(len, 26, 9, 2) },
+      { id: 'steam', label: 'Steam', points: wave(len, 26, 9, 2) },
     ],
   }
 }
