@@ -73,10 +73,9 @@ const summaryBase: Summary = {
       id: 'sources',
       label: 'Источники трафика',
       items: [
-        { label: 'Telegram', value: 46 },
-        { label: 'OpenCode', value: 28 },
-        { label: 'GitHub', value: 17 },
-        { label: 'Прочее', value: 9 },
+        { label: 'Telegram', value: 48 },
+        { label: 'OpenCode', value: 32 },
+        { label: 'Steam', value: 20 },
       ],
     },
   ],
