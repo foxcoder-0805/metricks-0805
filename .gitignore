@@ -24,3 +24,7 @@ yarn-error.log*
 
 # tauri
 src-tauri/target/
+
+# references
+sample.png
+sample.kra
