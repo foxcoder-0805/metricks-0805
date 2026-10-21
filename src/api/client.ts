@@ -1,3 +1,4 @@
+import { embedded } from '../data/embedded'
 import { getApiBase } from './config'
 import type { Bars, Range, Series, Summary } from './types'
 
@@ -11,7 +12,23 @@ export class ApiError extends Error {
   }
 }
 
+const USE_EMBEDDED = import.meta.env.VITE_USE_REMOTE !== '1'
+
 async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (USE_EMBEDDED) {
+    if (path.startsWith('/api/health')) return embedded.health() as T
+    if (path.startsWith('/api/summary')) return embedded.summary() as T
+    if (path.startsWith('/api/series')) {
+      const url = new URL(path, 'http://localhost')
+      return embedded.series((url.searchParams.get('range') as Range) || '24h') as T
+    }
+    if (path.startsWith('/api/bars')) {
+      const url = new URL(path, 'http://localhost')
+      return embedded.bars((url.searchParams.get('range') as Range) || '24h') as T
+    }
+    throw new ApiError('unknown endpoint', 0)
+  }
+
   const base = getApiBase()
   let response: Response
 
