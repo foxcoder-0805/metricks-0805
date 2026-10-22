@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Metricks
+Exec=/home/foxcoder/prog/metricks/target/release/metricks
+Icon=/home/foxcoder/prog/metricks/icon.png
+Type=Application
+Categories=Utility
+Terminal=false
