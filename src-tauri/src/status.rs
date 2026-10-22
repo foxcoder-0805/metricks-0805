@@ -4,7 +4,11 @@
 //! - OpenCode читается из своей базы `~/.local/share/opencode/opencode.db`
 //!   через CLI `sqlite3` (в режиме чтения);
 //! - музыка — через MPRIS на сессионной шине D-Bus (`busctl`);
-//! - Steam — по логам клиента и манифестам игр.
+//! - Steam — по логам клиента и манифестам игр;
+//! - система — `/proc` и `df`;
+//! - окно в фокусе — `hyprctl activewindow -j`;
+//! - git — ветка и изменения в каталоге сессии;
+//! - сеть — `nmcli`.
 //!
 //! Любой источник может отсутствовать: тогда соответствующая карточка
 //! получает `available: false` и фронтенд показывает честное «нет данных».
@@ -73,10 +77,70 @@ pub struct SteamStatus {
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct SystemStatus {
+    /// Хотя бы память или диск прочитались.
+    pub available: bool,
+    /// Занятая и общая память в байтах.
+    pub memory_used: Option<u64>,
+    pub memory_total: Option<u64>,
+    /// Занятое и общее место на корневом разделе в байтах.
+    pub disk_used: Option<u64>,
+    pub disk_total: Option<u64>,
+    /// Средняя загрузка за последнюю минуту.
+    pub load: Option<f64>,
+    /// Время работы системы в секундах.
+    pub uptime: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusStatus {
+    /// Гипланд ответил и в фокусе есть окно.
+    pub available: bool,
+    /// Класс окна: `firefox`, `foot`, `steam`…
+    pub app: String,
+    pub title: String,
+    /// Имя рабочего стола.
+    pub workspace: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    /// Каталог сессии оказался git-репозиторием.
+    pub available: bool,
+    pub branch: String,
+    /// Сколько файлов изменено; `None` — посчитать не удалось.
+    pub changed: Option<u64>,
+    /// Имя каталога проекта.
+    pub directory: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkStatus {
+    /// Есть активное подключение.
+    pub available: bool,
+    /// Имя профиля подключения.
+    pub connection: String,
+    /// Сетевой интерфейс: `wlan0`, `enp3s0`…
+    pub device: String,
+    /// SSID, если подключение по Wi-Fi.
+    pub wifi: String,
+    /// Уровень сигнала в процентах, если его отдаёт NetworkManager.
+    pub signal: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct StatusSnapshot {
     pub opencode: OpenCodeStatus,
     pub music: MusicStatus,
     pub steam: SteamStatus,
+    pub system: SystemStatus,
+    pub focus: FocusStatus,
+    pub git: GitStatus,
+    pub network: NetworkStatus,
     /// Момент сбора (unix, мс) — по нему фронтенд считает «N мин назад».
     pub collected_at: i64,
 }
@@ -88,10 +152,17 @@ pub fn get_status() -> StatusSnapshot {
 }
 
 pub fn collect() -> StatusSnapshot {
+    let opencode = opencode_status();
+    let git = git_status(&git_workdir(&opencode));
+
     StatusSnapshot {
-        opencode: opencode_status(),
+        opencode,
         music: music_status(),
         steam: steam_status(),
+        system: system_status(),
+        focus: focus_status(),
+        git,
+        network: network_status(),
         collected_at: now_ms(),
     }
 }
@@ -113,6 +184,16 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!text.is_empty()).then_some(text)
+}
+
+/// Вариант [`run`] без отбрасывания пустого stdout: у `git status` пустой
+/// вывод — это «дерево чисто», а не ошибка.
+fn run_raw(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 // ───────────────────────────── OpenCode ─────────────────────────────
@@ -508,6 +589,178 @@ fn steam_status() -> SteamStatus {
     }
 }
 
+// ───────────────────────────── система ─────────────────────────────
+
+/// `/proc/meminfo` хранит значения в килобайтах: `MemTotal:  32629828 kB`.
+fn meminfo_bytes(text: &str, key: &str) -> Option<u64> {
+    let line = text
+        .lines()
+        .find(|line| line.split(':').next() == Some(key))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+
+    Some(kb.saturating_mul(1024))
+}
+
+fn system_status() -> SystemStatus {
+    let mut status = SystemStatus::default();
+
+    if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
+        let total = meminfo_bytes(&meminfo, "MemTotal");
+        // MemAvailable учитывает кеш, который ядро отдаст под нужды приложений.
+        let available = meminfo_bytes(&meminfo, "MemAvailable");
+
+        if let (Some(total), Some(available)) = (total, available) {
+            status.memory_total = Some(total);
+            status.memory_used = Some(total.saturating_sub(available));
+        }
+    }
+
+    if let Ok(loadavg) = fs::read_to_string("/proc/loadavg") {
+        status.load = loadavg
+            .split_whitespace()
+            .next()
+            .and_then(|value| value.parse().ok());
+    }
+
+    if let Ok(uptime) = fs::read_to_string("/proc/uptime") {
+        status.uptime = uptime
+            .split_whitespace()
+            .next()
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|seconds| seconds as u64);
+    }
+
+    // `--output` есть только в GNU coreutils, зато не зависит от локали
+    // и не требует разбирать колонки переменной ширины.
+    if let Some(df) = run("df", &["-B1", "--output=used,size", "/"]) {
+        if let Some(line) = df.lines().nth(1) {
+            let mut fields = line.split_whitespace();
+            status.disk_used = fields.next().and_then(|value| value.parse().ok());
+            status.disk_total = fields.next().and_then(|value| value.parse().ok());
+        }
+    }
+
+    status.available = status.memory_total.is_some() || status.disk_total.is_some();
+    status
+}
+
+// ───────────────────────────── окно в фокусе ─────────────────────────────
+
+fn focus_status() -> FocusStatus {
+    let Some(raw) = run("hyprctl", &["activewindow", "-j"]) else {
+        return FocusStatus::default();
+    };
+    let Ok(window) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return FocusStatus::default();
+    };
+
+    // У части окон класс пустой, у части — заголовок: ориентируемся на оба.
+    let text = |value: Option<&serde_json::Value>| {
+        value
+            .and_then(|item| item.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let app = text(window.get("class"));
+    let title = text(window.get("title"));
+    let workspace = text(window.get("workspace").and_then(|item| item.get("name")));
+
+    FocusStatus {
+        available: !app.is_empty() || !title.is_empty(),
+        app,
+        title,
+        workspace,
+    }
+}
+
+// ───────────────────────────── git ─────────────────────────────
+
+/// Git показываем для проекта, в котором идёт сессия OpenCode:
+/// это и есть «текущая работа» на машине.
+fn git_workdir(opencode: &OpenCodeStatus) -> PathBuf {
+    let session_dir = PathBuf::from(&opencode.directory);
+    if !opencode.directory.is_empty() && session_dir.is_dir() {
+        return session_dir;
+    }
+
+    home_dir().unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn git_status(directory: &Path) -> GitStatus {
+    let Some(dir) = directory.to_str() else {
+        return GitStatus::default();
+    };
+
+    let Some(branch) = run("git", &["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]) else {
+        return GitStatus::default();
+    };
+
+    // Пустой вывод `--porcelain` — чистое дерево, поэтому здесь нужен run_raw.
+    let changed = run_raw("git", &["-C", dir, "status", "--porcelain"])
+        .map(|out| out.lines().filter(|line| !line.trim().is_empty()).count() as u64);
+
+    GitStatus {
+        available: true,
+        branch,
+        changed,
+        directory: directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+// ───────────────────────────── сеть ─────────────────────────────
+
+fn network_status() -> NetworkStatus {
+    let Some(raw) = run("nmcli", &["-t", "-f", "DEVICE,STATE,CONNECTION", "device"]) else {
+        return NetworkStatus::default();
+    };
+
+    // Строки `-t` разделены двоеточиями. SSID и имя профиля могут содержать
+    // экранированные `\:`, поэтому склеиваем хвост обратно.
+    let Some((device, connection)) = raw.lines().find_map(|line| {
+        let mut fields = line.splitn(3, ':');
+        let device = fields.next()?;
+        let state = fields.next()?;
+        let connection = fields.next().unwrap_or_default();
+
+        (state == "connected" && device != "lo")
+            .then(|| (device.to_string(), connection.replace("\\:", ":")))
+    }) else {
+        return NetworkStatus::default();
+    };
+
+    let mut status = NetworkStatus {
+        available: true,
+        device,
+        connection,
+        ..Default::default()
+    };
+
+    if status.device.starts_with("wl") {
+        let wifi = run("nmcli", &["-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi"]);
+
+        if let Some(lines) = wifi {
+            // Активная сеть — та, у которой ACTIVE:yes.
+            for line in lines.lines() {
+                let mut fields = line.splitn(3, ':');
+                if fields.next() != Some("yes") {
+                    continue;
+                }
+
+                status.wifi = fields.next().unwrap_or_default().replace("\\:", ":");
+                status.signal = fields.next().and_then(|value| value.parse().ok());
+                break;
+            }
+        }
+    }
+
+    status
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +793,17 @@ mod tests {
             fallback_player_name("org.mpris.MediaPlayer2.firefox.instance_1_51"),
             "Firefox"
         );
+    }
+
+    #[test]
+    fn reads_meminfo_in_bytes() {
+        let text = "MemTotal:       32629828 kB\nMemFree:         1024 kB\nMemAvailable:   25753644 kB\n";
+
+        assert_eq!(meminfo_bytes(text, "MemTotal"), Some(32629828 * 1024));
+        assert_eq!(meminfo_bytes(text, "MemFree"), Some(1024 * 1024));
+        // ключи-префиксы не должны цепляться за чужие строки
+        assert_eq!(meminfo_bytes(text, "MemFree"), Some(1024 * 1024));
+        assert_eq!(meminfo_bytes(text, "Mem"), None);
     }
 
     /// Диагностика: печатает реальный срез машины.
