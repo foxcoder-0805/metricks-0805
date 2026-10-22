@@ -143,6 +143,14 @@ export const ChevronDownIcon = (props: IconProps) => (
   </Svg>
 )
 
+/** Крестик — закрывает карточку. */
+export const CloseIcon = (props: IconProps) => (
+  <Svg {...props} strokeWidth={2.2}>
+    <path d="M6.5 6.5 17.5 17.5" />
+    <path d="M17.5 6.5 6.5 17.5" />
+  </Svg>
+)
+
 export const CheckIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="m5 12.5 4.5 4.5L19 7" />
