@@ -17,6 +17,46 @@ const summaryBase: Summary = {
   meta: { generatedAt: iso, period: '24h' },
   user: { name: 'Elisey Lomtev', initials: 'EL', role: 'platform', status: 'online' },
   status: { label: 'В норме', state: 'ok' },
+  overview: {
+    title: 'Динамика по источникам',
+    value: 124680,
+    unit: 'запросов',
+    label: 'Всего запросов',
+    description:
+      'Telegram даёт половину трафика и растёт равномерно, OpenCode прибавляет быстрее остальных, Steam держится на вечерних пиках. Данные обновляются каждые 15 секунд.',
+  },
+  sources: [
+    {
+      id: 'telegram',
+      title: 'Telegram',
+      headline: 'Подписчик был онлайн',
+      value: 12480,
+      unit: 'подписчиков',
+      note: '19 мин назад',
+      delta: 6.4,
+      spark: wave(24, 95, 14, 12),
+    },
+    {
+      id: 'opencode',
+      title: 'OpenCode',
+      headline: 'Сессия активна',
+      value: 1248,
+      unit: 'токенов/мин',
+      note: '3 мин назад',
+      delta: 12.1,
+      spark: wave(24, 46, 13, 9),
+    },
+    {
+      id: 'steam',
+      title: 'Steam',
+      headline: 'Сессия в игре',
+      value: 2940,
+      unit: 'игроков онлайн',
+      note: '41 мин назад',
+      delta: -3.2,
+      spark: wave(24, 28, 10, 4),
+    },
+  ],
   kpis: [
     {
       id: 'requests',
