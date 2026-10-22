@@ -1,22 +1,25 @@
 import { useState } from 'react'
 import { getApiBase, setApiBase } from './api/config'
-import { RANGES, type Range } from './api/types'
 import { Header } from './components/Header'
-import { OverviewCard } from './components/OverviewCard'
-import { SourceCard } from './components/SourceCard'
+import { SessionCard } from './components/SessionCard'
+import { StatusCard } from './components/StatusCard'
 import { useDashboard } from './hooks/useDashboard'
 import { formatClock } from './lib/format'
 
 export default function App() {
-  const [range, setRange] = useState<Range>('24h')
   const [apiBase, setApiBaseState] = useState(() => getApiBase())
-  const { summary, series, error, loading, updatedAt, refresh } = useDashboard(range, apiBase)
+  const [dismissed, setDismissed] = useState<string[]>([])
+  const { summary, error, loading, updatedAt, refresh } = useDashboard(apiBase)
 
-  const periodLabel = RANGES.find((item) => item.id === range)?.label ?? '24 часа'
+  const cards = (summary?.cards ?? []).filter((card) => !dismissed.includes(card.id))
 
   const handleApiBaseChange = (base: string) => {
     setApiBase(base)
     setApiBaseState(getApiBase())
+  }
+
+  const dismissCard = (id: string) => {
+    setDismissed((list) => (list.includes(id) ? list : [...list, id]))
   }
 
   return (
@@ -25,8 +28,6 @@ export default function App() {
         <Header
           user={summary?.user ?? null}
           status={summary?.status ?? null}
-          range={range}
-          onRangeChange={setRange}
           onRefresh={refresh}
           loading={loading}
           connected={!error}
@@ -48,11 +49,11 @@ export default function App() {
           </div>
         ) : (
           <main className="grid">
-            {(summary?.sources ?? []).map((source) => (
-              <SourceCard key={source.id} source={source} />
+            {cards.map((card) => (
+              <StatusCard key={card.id} card={card} onDismiss={dismissCard} />
             ))}
 
-            <OverviewCard overview={summary?.overview ?? null} series={series} periodLabel={periodLabel} unit="req/s" />
+            <SessionCard session={summary?.session ?? null} />
           </main>
         )}
 
@@ -63,6 +64,11 @@ export default function App() {
           </span>
           <span className="statusbar__item">API: {apiBase}</span>
           {error ? <span className="statusbar__item">⚠ {error}</span> : null}
+          {dismissed.length > 0 ? (
+            <button type="button" className="statusbar__link" onClick={() => setDismissed([])}>
+              Вернуть карточки
+            </button>
+          ) : null}
         </footer>
       </div>
     </div>

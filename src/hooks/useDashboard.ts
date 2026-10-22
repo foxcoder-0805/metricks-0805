@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { Range, Series, Summary } from '../api/types'
+import type { Summary } from '../api/types'
 
 const POLL_INTERVAL = 15_000
 
 export interface DashboardState {
   summary: Summary | null
-  series: Series | null
   error: string | null
   loading: boolean
   updatedAt: Date | null
@@ -14,13 +13,12 @@ export interface DashboardState {
 }
 
 /**
- * Загружает сводку и ряд динамики, обновляет их по таймеру.
+ * Загружает сводку и обновляет её по таймеру.
  * При ошибке последние успешные данные остаются на экране — дашборд
  * не должен пустеть из-за одного сбоя сети.
  */
-export function useDashboard(range: Range, apiBase: string): DashboardState {
+export function useDashboard(apiBase: string): DashboardState {
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [series, setSeries] = useState<Series | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
@@ -34,15 +32,11 @@ export function useDashboard(range: Range, apiBase: string): DashboardState {
 
     const load = async () => {
       try {
-        const [summaryData, seriesData] = await Promise.all([
-          api.summary(controller.signal),
-          api.series(range, controller.signal),
-        ])
+        const summaryData = await api.summary(controller.signal)
 
         if (cancelled) return
 
         setSummary(summaryData)
-        setSeries(seriesData)
         setError(null)
         setUpdatedAt(new Date())
       } catch (caught) {
@@ -62,7 +56,7 @@ export function useDashboard(range: Range, apiBase: string): DashboardState {
       controller.abort()
       window.clearInterval(timer)
     }
-  }, [range, apiBase, nonce])
+  }, [apiBase, nonce])
 
-  return { summary, series, error, loading, updatedAt, refresh }
+  return { summary, error, loading, updatedAt, refresh }
 }

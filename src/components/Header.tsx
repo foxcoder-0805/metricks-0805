@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { RANGES, type HealthState, type Range, type Summary } from '../api/types'
-import { CalendarIcon, RefreshIcon, SettingsIcon } from './Icons'
+import type { HealthState, Summary } from '../api/types'
+import { RefreshIcon, SettingsIcon } from './Icons'
 
 interface HeaderProps {
   user: Summary['user'] | null
   status: Summary['status'] | null
-  range: Range
-  onRangeChange: (range: Range) => void
   onRefresh: () => void
   loading: boolean
   connected: boolean
@@ -17,8 +15,6 @@ interface HeaderProps {
 export function Header({
   user,
   status,
-  range,
-  onRangeChange,
   onRefresh,
   loading,
   connected,
@@ -53,17 +49,6 @@ export function Header({
       </div>
 
       <div className="topbar__meta">
-        <label className="pill">
-          <CalendarIcon size={16} />
-          <select value={range} onChange={(event) => onRangeChange(event.target.value as Range)}>
-            {RANGES.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <span className={`chip chip--${chipState}`}>
           <span className="chip__dot" />
           {chipLabel}
