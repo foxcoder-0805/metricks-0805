@@ -21,10 +21,7 @@
   --purple-200: #ddd6fe;
   --purple-300: #c4b5fd;
   --purple-400: #a855f7;
-  --purple-500: #8b5cf6;
   --purple-600: #7c3aed;
-  --purple-700: #6d28d9;
-  --purple-900: #4c1d95;
 
   /* Текст */
   --text: #ede9fe;
@@ -32,17 +29,8 @@
   --muted: #9f95c0;
   --muted-dim: #6f6790;
 
-  /* Палитра серий графиков — только фиолетовые оттенки */
-  --chart-1: #c084fc;
-  --chart-2: #a855f7;
-  --chart-3: #8b5cf6;
-  --chart-4: #6d28d9;
-  --chart-5: #d8b4fe;
-  --chart-6: #7e22ce;
-
   /* Скругления */
   --r-pill: 999px;
-  --r-xl: 28px;
   --r-lg: 22px;
   --r-md: 14px;
   --r-sm: 10px;
