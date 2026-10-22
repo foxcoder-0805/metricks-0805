@@ -3,22 +3,27 @@ import { AddCardDialog } from './components/AddCardDialog'
 import { AddCardTile } from './components/AddCardTile'
 import { Header } from './components/Header'
 import { StatusCard } from './components/StatusCard'
-import { dashboardStatus, dashboardUser, initialCards } from './data/dashboard'
+import { builtinCards, dashboardStatus, dashboardUser } from './data/dashboard'
+import { formatClock, renderCard } from './data/live'
+import { useStatus } from './hooks/useStatus'
 import type { StatusCard as StatusCardData } from './types'
 
 export default function App() {
+  const { snapshot, error } = useStatus()
   const [dismissed, setDismissed] = useState<string[]>([])
   const [added, setAdded] = useState<StatusCardData[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const counter = useRef(0)
 
-  const cards = [...initialCards.filter((card) => !dismissed.includes(card.id)), ...added]
+  const cards = [...builtinCards.filter((card) => !dismissed.includes(card.id)), ...added].map(
+    (card) => renderCard(card, snapshot),
+  )
 
   const dismissCard = (id: string) => {
     setAdded((list) => list.filter((card) => card.id !== id))
 
     // встроенные карточки помним, чтобы «Вернуть карточки» их восстановило
-    if (initialCards.some((card) => card.id === id)) {
+    if (builtinCards.some((card) => card.id === id)) {
       setDismissed((list) => (list.includes(id) ? list : [...list, id]))
     }
   }
@@ -44,7 +49,11 @@ export default function App() {
         <footer className="statusbar">
           <span className="statusbar__item">
             <span className="chip__dot" />
-            Данные статичны
+            {error ? 'нет данных с машины' : 'живые данные с машины'}
+          </span>
+
+          <span className="statusbar__item">
+            {snapshot ? `обновлено в ${formatClock(snapshot.collectedAt)}` : 'ждём данные'}
           </span>
 
           <span className="statusbar__item">Карточек: {cards.length}</span>
@@ -58,7 +67,11 @@ export default function App() {
       </div>
 
       {dialogOpen ? (
-        <AddCardDialog onClose={() => setDialogOpen(false)} onAdd={addCard} />
+        <AddCardDialog
+          snapshot={snapshot}
+          onClose={() => setDialogOpen(false)}
+          onAdd={addCard}
+        />
       ) : null}
     </div>
   )

@@ -487,8 +487,22 @@ button {
 }
 
 .metric__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 550;
+}
+
+.metric__live {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: rgba(124, 58, 237, 0.3);
+  color: var(--purple-200);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
 }
 
 .metric__value {

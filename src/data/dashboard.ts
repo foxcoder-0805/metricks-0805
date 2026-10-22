@@ -13,21 +13,27 @@ export const dashboardStatus = {
   label: 'В норме',
 }
 
-/** Стартовый набор карточек. */
-export const initialCards: StatusCard[] = [
+/**
+ * Встроенные карточки. Все три привязаны к живым источникам машины,
+ * поэтому их подписи собираются из снапшота, а не хранятся здесь.
+ */
+export const builtinCards: StatusCard[] = [
   {
     id: 'opencode',
     title: 'OpenCode',
-    lines: ['Правит конфиг плагина сборки', '19 мин назад'],
+    lines: ['читаем сессию'],
+    source: 'opencode.task',
   },
   {
     id: 'music',
     title: 'Музыка',
-    lines: ['Barbie girl · 1:08–3:05'],
+    lines: ['ищем плеер'],
+    source: 'music.track',
   },
   {
     id: 'steam',
     title: 'Steam',
-    lines: ['Cyberpunk 2077 · 42%'],
+    lines: ['смотрим логи'],
+    source: 'steam.download',
   },
 ]
