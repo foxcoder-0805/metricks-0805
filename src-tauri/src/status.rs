@@ -145,6 +145,15 @@ pub struct NetworkStatus {
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct UserStatus {
+    /// Логин владельца сессии: `foxcoder`.
+    pub login: String,
+    /// Домашний каталог — карточке он не нужен, но фронтенду бывает полезен.
+    pub home: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct StatusSnapshot {
     pub opencode: OpenCodeStatus,
     pub music: MusicStatus,
@@ -153,6 +162,7 @@ pub struct StatusSnapshot {
     pub focus: FocusStatus,
     pub git: GitStatus,
     pub network: NetworkStatus,
+    pub user: UserStatus,
     /// Момент сбора (unix, мс) — по нему фронтенд считает «N мин назад».
     pub collected_at: i64,
 }
@@ -178,6 +188,7 @@ pub fn collect() -> StatusSnapshot {
         focus: focus_status(),
         git,
         network: network_status(),
+        user: user_status(),
         collected_at: now_ms(),
     }
 }
@@ -286,6 +297,25 @@ fn run_raw(program: &str, args: &[&str]) -> Option<String> {
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Логин владельца сессии. Обычно он есть в окружении, а `whoami` нужен
+/// только как запасной путь: приложение может быть запущено из окружения
+/// без `USER` (например, из автозапуска).
+fn user_status() -> UserStatus {
+    let login = std::env::var("USER")
+        .ok()
+        .filter(|name| !name.is_empty())
+        .or_else(|| std::env::var("LOGNAME").ok().filter(|name| !name.is_empty()))
+        .or_else(|| run("whoami", &[]).map(|name| name.trim().to_string()).filter(|n| !n.is_empty()))
+        .unwrap_or_default();
+
+    UserStatus {
+        login,
+        home: home_dir()
+            .and_then(|home| home.to_str().map(str::to_string))
+            .unwrap_or_default(),
+    }
 }
 
 fn opencode_db_path() -> Option<PathBuf> {

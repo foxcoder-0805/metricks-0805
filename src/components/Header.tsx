@@ -1,15 +1,14 @@
 interface HeaderProps {
-  user: {
-    name: string
-    initials: string
-    role?: string
-  }
+  /** Логин владельца сессии; пусто, пока снимок не пришёл. */
+  login: string
   status: {
     label: string
   }
 }
 
-export function Header({ user, status }: HeaderProps) {
+export function Header({ login, status }: HeaderProps) {
+  const label = login || 'локальный сеанс'
+
   return (
     <header className="topbar">
       <div className="brand">
@@ -26,8 +25,8 @@ export function Header({ user, status }: HeaderProps) {
           {status.label}
         </span>
 
-        <div className="avatar" title={`${user.name}${user.role ? ` · ${user.role}` : ''}`}>
-          <span>{user.initials}</span>
+        <div className="avatar" title={login ? `Сеанс ${login}` : 'Сеанс ещё не определён'}>
+          <span className="avatar__login">{label}</span>
           <i className="avatar__dot" />
         </div>
       </div>

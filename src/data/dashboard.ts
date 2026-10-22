@@ -1,13 +1,5 @@
 import type { StatusCard } from '../types'
 
-/** Пользователь в шапке. */
-export const dashboardUser = {
-  name: 'Elisey Lomtev',
-  initials: 'EL',
-  role: 'platform',
-  status: 'online' as const,
-}
-
 /** Состояние доски в шапке. */
 export const dashboardStatus = {
   label: 'В норме',

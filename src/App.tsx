@@ -4,7 +4,7 @@ import { AddCardTile } from './components/AddCardTile'
 import { AudioVisualizer } from './components/AudioVisualizer'
 import { Header } from './components/Header'
 import { StatusCard } from './components/StatusCard'
-import { builtinCards, dashboardStatus, dashboardUser } from './data/dashboard'
+import { builtinCards, dashboardStatus } from './data/dashboard'
 import { formatClock, renderCard } from './data/live'
 import { useAudioBars } from './hooks/useAudioBars'
 import { useStatus } from './hooks/useStatus'
@@ -39,7 +39,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="shell">
-        <Header user={dashboardUser} status={dashboardStatus} />
+        <Header login={snapshot?.user.login ?? ''} status={dashboardStatus} />
 
         <main className="grid">
           {cards.map((card) => (

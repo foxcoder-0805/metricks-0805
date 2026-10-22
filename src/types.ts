@@ -60,6 +60,13 @@ export interface OpenCodeStatus {
   idle: boolean
 }
 
+/** Владелец сессии на этой машине. */
+export interface UserStatus {
+  /** Логин: `foxcoder`. */
+  login: string
+  home: string
+}
+
 /** Текущее воспроизведение MPRIS-плеера. */
 export interface MusicStatus {
   available: boolean
@@ -144,5 +151,6 @@ export interface StatusSnapshot {
   focus: FocusStatus
   git: GitStatus
   network: NetworkStatus
+  user: UserStatus
   collectedAt: number
 }

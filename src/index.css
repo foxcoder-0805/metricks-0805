@@ -187,14 +187,22 @@ button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 40px;
+  min-width: 40px;
   height: 40px;
+  padding: 0 16px;
   border-radius: var(--r-pill);
   border: 1px solid rgba(168, 85, 247, 0.4);
   background: radial-gradient(circle at 30% 25%, rgba(196, 181, 253, 0.28), rgba(109, 40, 217, 0.32));
   color: var(--purple-100);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
+}
+
+/* Логин в капсуле: моноширинный, чтобы имя читалось как идентификатор сеанса. */
+.avatar__login {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .avatar__dot {

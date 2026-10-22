@@ -1,3 +1,5 @@
+# WARNING MADE WITH AI!!!
+
 # Metricks
 
 Desktop status dashboard built with [Tauri v2](https://tauri.app), React 19, TypeScript and Vite.
