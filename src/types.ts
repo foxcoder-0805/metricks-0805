@@ -76,7 +76,14 @@ export interface SteamStatus {
   installed: boolean
   running: boolean
   game: string
+  /** Процент загрузки по манифесту игры. */
   percent: number | null
+  downloaded: number | null
+  total: number | null
+  /** Скорость в байтах в секунду. */
+  rate: number | null
+  /** Сколько секунд осталось при текущей скорости. */
+  eta: number | null
   state: string
 }
 

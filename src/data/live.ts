@@ -75,6 +75,27 @@ function formatUptime(seconds: number): string {
   return `${minutes} мин`
 }
 
+/** Остаток загрузки: «меньше минуты», «≈44 мин», «≈1 ч 12 мин». */
+function formatEta(seconds: number): string {
+  if (seconds < 60) return 'меньше минуты'
+
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `≈${minutes} мин`
+
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+
+  return rest > 0 ? `≈${hours} ч ${rest} мин` : `≈${hours} ч`
+}
+
+/** Скорость загрузки: «4.4 МБ/с» или «820 КБ/с». */
+function formatRate(bytesPerSecond: number): string {
+  const megabytes = bytesPerSecond / 1024 ** 2
+  if (megabytes >= 1) return `${megabytes.toFixed(1)} МБ/с`
+
+  return `${Math.max(1, Math.round(bytesPerSecond / 1024))} КБ/с`
+}
+
 function opencodeTask(status: OpenCodeStatus): string[] {
   if (!status.available) return ['сессий нет']
 
@@ -108,24 +129,39 @@ function musicPlayer(status: MusicStatus): string[] {
   return [status.player || 'неизвестный плеер', status.playing ? 'играет' : 'на паузе']
 }
 
+/** Скорость и остаток загрузки Steam: «осталось ≈44 мин · 4.4 МБ/с». */
+function steamDetails(status: SteamStatus): string[] {
+  const details: string[] = []
+  if (status.eta !== null) details.push(`осталось ${formatEta(status.eta)}`)
+  if (status.rate !== null) details.push(formatRate(status.rate))
+
+  return details
+}
+
 function steamDownload(status: SteamStatus): string[] {
   if (!status.installed) return ['не установлен']
   if (!status.running) return ['не запущен']
   if (!status.game) return [status.state || 'нет загрузок']
 
-  const line =
-    status.percent === null
-      ? status.game
-      : `${status.game} · ${Math.round(status.percent)}%`
+  const progress =
+    status.percent === null ? status.game : `${status.game} · ${Math.round(status.percent)}%`
+  const headline = status.state === 'пауза' ? `${progress} · пауза` : progress
+  const details = steamDetails(status)
 
-  return [status.state === 'пауза' ? `${line} · пауза` : line]
+  return details.length > 0
+    ? [truncate(headline, 80), details.join(' · ')]
+    : [truncate(headline, 80)]
 }
 
 function steamState(status: SteamStatus): string[] {
   if (!status.installed) return ['не установлен']
   if (!status.running) return ['не запущен']
 
-  return [status.state || 'запущен', status.game || 'загрузок нет']
+  const details: string[] = []
+  if (status.percent !== null) details.push(`${Math.round(status.percent)}%`)
+  details.push(...steamDetails(status))
+
+  return details.length > 0 ? [status.state || 'запущен', details.join(' · ')] : [status.state || 'запущен']
 }
 
 function systemMemory(status: SystemStatus): string[] {

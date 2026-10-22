@@ -45,13 +45,13 @@ npm run dev
 
 ## Data
 
-The dashboard works fully offline: there is no backend and no network calls. The Rust layer collects machine state and the frontend polls it through the `get_status` Tauri command every 5 seconds.
+The dashboard works fully offline: there is no backend and no network calls. The Rust layer collects machine state and the frontend polls it through the `get_status` Tauri command every second. The git repository is re-read at most every 5 seconds, so a one-second poll does not run `git status` on every tick.
 
 | Card | Source |
 | --- | --- |
 | OpenCode | `~/.local/share/opencode/opencode.db` — the most recently updated session: title, last request, model, idle state |
 | Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist and position |
-| Steam | Steam process and `logs/content_log.txt` — the game being downloaded and its progress, with the name from `steamapps/appmanifest_<id>.acf` |
+| Steam | Steam process, `steamapps/appmanifest_<id>.acf` (all libraries from `libraryfolders.vdf`) for the game, downloaded bytes, total size and state, and `logs/content_log.txt` for the download rate — percent, speed in MB/s and time left are computed from them |
 | System | `/proc/meminfo` (used memory), `/proc/loadavg`, `/proc/uptime` and `df -B1 /` (root disk usage) |
 | Window | `hyprctl activewindow -j` — the class, title and workspace of the focused window |
 | Git | `git -C <session directory> rev-parse` and `status --porcelain` — the branch and the number of changed files in the OpenCode project |
@@ -110,6 +110,6 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 
 ## Layout
 
-- Top row: three status cards. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every 5 seconds.
+- Top row: three status cards. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every second.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
 - Second row: a `+` tile in place of the fourth card. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Every metric is live and marked "с машины" in the dialog.
