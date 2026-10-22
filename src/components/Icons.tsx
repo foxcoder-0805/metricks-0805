@@ -119,6 +119,24 @@ export const TrendingDownIcon = (props: IconProps) => (
   </Svg>
 )
 
+/**
+ * Стрелка вверх-вправо — как в шаблоне: диагональ со шляпкой,
+ * внутри круглого бейджа трендов.
+ */
+export const ArrowUpRightIcon = (props: IconProps) => (
+  <Svg {...props} strokeWidth={2.1}>
+    <path d="M6 18 18 6" />
+    <path d="M9.5 6H18v8.5" />
+  </Svg>
+)
+
+export const ArrowDownRightIcon = (props: IconProps) => (
+  <Svg {...props} strokeWidth={2.1}>
+    <path d="M6 6 18 18" />
+    <path d="M9.5 18H18V9.5" />
+  </Svg>
+)
+
 export const ChevronDownIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="m6 9.5 6 6 6-6" />
