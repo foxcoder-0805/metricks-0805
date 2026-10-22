@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod status;
 
 /// Точка входа приложения.
@@ -10,7 +11,10 @@ pub fn run() {
     configure_webkit();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![status::get_status])
+        .invoke_handler(tauri::generate_handler![
+            status::get_status,
+            audio::get_audio_bars
+        ])
         .run(tauri::generate_context!())
         .expect("не удалось запустить приложение Metricks");
 }
