@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { appCatalog } from '../data/apps'
-import type { StatusCard } from '../types'
+import { sourceLines } from '../data/live'
+import type { StatusCard, StatusSnapshot } from '../types'
 import { CloseIcon } from './Icons'
 
 interface AddCardDialogProps {
+  /** Свежий снимок машины — для предпросмотра живых показателей. */
+  snapshot: StatusSnapshot | null
   onClose: () => void
   onAdd: (card: StatusCard) => void
 }
@@ -12,7 +15,7 @@ interface AddCardDialogProps {
  * Окно добавления карточки: сначала выбирается приложение,
  * затем — что именно за ним следить.
  */
-export function AddCardDialog({ onClose, onAdd }: AddCardDialogProps) {
+export function AddCardDialog({ snapshot, onClose, onAdd }: AddCardDialogProps) {
   const [appId, setAppId] = useState<string | null>(null)
   const [metricId, setMetricId] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -34,7 +37,12 @@ export function AddCardDialog({ onClose, onAdd }: AddCardDialogProps) {
   const handleAdd = () => {
     if (!app || !metric) return
 
-    onAdd({ id: '', title: app.title, lines: [metric.value] })
+    onAdd({
+      id: '',
+      title: app.title,
+      lines: metric.value ? [metric.value] : [],
+      source: metric.source,
+    })
     onClose()
   }
 
@@ -97,8 +105,13 @@ export function AddCardDialog({ onClose, onAdd }: AddCardDialogProps) {
                   className={`metric${item.id === metricId ? ' metric--active' : ''}`}
                   onClick={() => setMetricId(item.id)}
                 >
-                  <span className="metric__label">{item.label}</span>
-                  <span className="metric__value">{item.value}</span>
+                  <span className="metric__label">
+                    {item.label}
+                    {item.source ? <span className="metric__live">с машины</span> : null}
+                  </span>
+                  <span className="metric__value">
+                    {item.source ? sourceLines(item.source, snapshot).join(' · ') : item.value}
+                  </span>
                 </button>
               ))}
             </div>

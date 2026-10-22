@@ -1,32 +1,33 @@
 import type { AppOption } from '../types'
 
 /**
- * Каталог приложений и показателей. Данные статичны: карточка,
- * добавленная из каталога, сразу получает подпись из выбранного показателя.
+ * Каталог приложений и показателей. У OpenCode, музыки и Steam показатели
+ * привязаны к живым источникам машины (`source`), у остальных приложений
+ * подпись статична — их на машине пока нечем отследить.
  */
 export const appCatalog: AppOption[] = [
   {
     id: 'opencode',
     title: 'OpenCode',
     metrics: [
-      { id: 'task', label: 'Текущая задача', value: 'Правит конфиг плагина сборки · 19 мин назад' },
-      { id: 'steps', label: 'Прогресс шагов', value: '7 из 9 шагов · остался линтер' },
+      { id: 'task', label: 'Текущая задача', source: 'opencode.task' },
+      { id: 'request', label: 'Последний запрос', source: 'opencode.request' },
     ],
   },
   {
     id: 'steam',
     title: 'Steam',
     metrics: [
-      { id: 'download', label: 'Загрузка игры', value: 'Cyberpunk 2077 · 42%' },
-      { id: 'updates', label: 'Обновления', value: 'Counter-Strike 2 · обновление 1.2 ГБ' },
+      { id: 'download', label: 'Загрузка игры', source: 'steam.download' },
+      { id: 'state', label: 'Состояние клиента', source: 'steam.state' },
     ],
   },
   {
     id: 'music',
     title: 'Музыка',
     metrics: [
-      { id: 'track', label: 'Текущий трек', value: 'Barbie girl · 1:08–3:05' },
-      { id: 'player', label: 'Плеер', value: 'Spotify · альбом Plejura' },
+      { id: 'track', label: 'Текущий трек', source: 'music.track' },
+      { id: 'player', label: 'Плеер', source: 'music.player' },
     ],
   },
   {
@@ -66,7 +67,7 @@ export const appCatalog: AppOption[] = [
     title: 'Терминал',
     metrics: [
       { id: 'command', label: 'Активная задача', value: 'npm run build · 2 предупреждения' },
-      { id: 'branch', label: 'Ветка git', value: 'feature/static-card-builder · 4 коммита' },
+      { id: 'branch', label: 'Ветка git', value: 'feature/live-status · 4 коммита' },
     ],
   },
 ]
