@@ -17,7 +17,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -34,7 +34,17 @@ const GIT_TTL: Duration = Duration::from_secs(5);
 pub struct OpenCodeStatus {
     /// База найдена и в ней есть хотя бы одна сессия.
     pub available: bool,
-    /// Заголовок последней сессии — о чём идёт работа.
+    /// Открытые сессии: свежие сверху.
+    pub sessions: Vec<OpenCodeSession>,
+}
+
+/// Одна открытая сессия OpenCode.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeSession {
+    /// Идентификатор сессии — по нему фронтенд различает карточки.
+    pub id: String,
+    /// Заголовок сессии — о чём идёт работа.
     pub task: String,
     /// Последний запрос пользователя.
     pub request: String,
@@ -46,7 +56,9 @@ pub struct OpenCodeStatus {
     pub updated_at: Option<i64>,
     /// Сколько файлов изменено в сессии.
     pub files_changed: Option<i64>,
-    /// OpenCode закончил работу и ждёт следующего запроса.
+    /// Что OpenCode делает прямо сейчас: «думает», «пишет в файл «…»».
+    pub activity: String,
+    /// Сессия закончила работу и ждёт следующего запроса.
     pub idle: bool,
 }
 
@@ -145,6 +157,15 @@ pub struct NetworkStatus {
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct UserStatus {
+    /// Логин владельца сессии: `foxcoder`.
+    pub login: String,
+    /// Домашний каталог — карточке он не нужен, но фронтенду бывает полезен.
+    pub home: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct StatusSnapshot {
     pub opencode: OpenCodeStatus,
     pub music: MusicStatus,
@@ -153,6 +174,7 @@ pub struct StatusSnapshot {
     pub focus: FocusStatus,
     pub git: GitStatus,
     pub network: NetworkStatus,
+    pub user: UserStatus,
     /// Момент сбора (unix, мс) — по нему фронтенд считает «N мин назад».
     pub collected_at: i64,
 }
@@ -178,6 +200,7 @@ pub fn collect() -> StatusSnapshot {
         focus: focus_status(),
         git,
         network: network_status(),
+        user: user_status(),
         collected_at: now_ms(),
     }
 }
@@ -189,6 +212,9 @@ struct Cache {
     progress: Option<Progress>,
     /// Сглаженная скорость загрузки в байтах в секунду.
     rate_ema: Option<f64>,
+    /// Когда байты в последний раз реально выросли: по нему понимаем,
+    /// что старую скорость пора забыть.
+    sample_at: Option<Instant>,
 }
 
 /// Замер прогресса загрузки: по приросту байтов считаем живую скорость,
@@ -224,6 +250,39 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+/// Смещение местной зоны от UTC в миллисекундах.
+///
+/// Логи Steam пишут время без зоны, но по местным часам машины. Без поправки
+/// строка «свежая» выглядела бы на три часа старше — и загрузка навсегда
+/// оставалась бы паузой.
+fn local_offset_ms() -> i64 {
+    static OFFSET: OnceLock<i64> = OnceLock::new();
+
+    *OFFSET.get_or_init(|| {
+        let Some(raw) = run("date", &["+%z"]) else {
+            return 0;
+        };
+
+        let raw = raw.trim();
+        let sign = match raw.as_bytes().first() {
+            Some(b'-') => -1,
+            _ => 1,
+        };
+        let digits = raw.trim_start_matches(['+', '-']);
+
+        // Формат `+HHMM`: часы и минуты смещения.
+        let (hours, minutes) = match digits.len() {
+            4 => (
+                digits[..2].parse::<i64>().unwrap_or(0),
+                digits[2..].parse::<i64>().unwrap_or(0),
+            ),
+            _ => (0, 0),
+        };
+
+        sign * (hours * 3_600 + minutes * 60) * 1_000
+    })
+}
+
 /// Запускает внешнюю команду и возвращает stdout. Ошибки не пробрасываются:
 /// отсутствие утилиты — это просто «источник недоступен».
 fn run(program: &str, args: &[&str]) -> Option<String> {
@@ -252,6 +311,25 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// Логин владельца сессии. Обычно он есть в окружении, а `whoami` нужен
+/// только как запасной путь: приложение может быть запущено из окружения
+/// без `USER` (например, из автозапуска).
+fn user_status() -> UserStatus {
+    let login = std::env::var("USER")
+        .ok()
+        .filter(|name| !name.is_empty())
+        .or_else(|| std::env::var("LOGNAME").ok().filter(|name| !name.is_empty()))
+        .or_else(|| run("whoami", &[]).map(|name| name.trim().to_string()).filter(|n| !n.is_empty()))
+        .unwrap_or_default();
+
+    UserStatus {
+        login,
+        home: home_dir()
+            .and_then(|home| home.to_str().map(str::to_string))
+            .unwrap_or_default(),
+    }
+}
+
 fn opencode_db_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -268,58 +346,210 @@ fn sqlite_json(db: &Path, query: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
-const SESSION_QUERY: &str = "select title, directory, model, agent, time_updated, \
+const SESSION_QUERY: &str = "select id, title, directory, model, time_updated, \
      time_idle, idle_outcome, summary_files from session_v2 \
-     order by time_updated desc limit 1";
+     order by time_updated desc limit 10";
 
-const REQUEST_QUERY: &str = "select data from session_message \
-     where type = 'user' order by seq desc limit 1";
+/// Сколько сессий считаются открытыми: те, что трогали за последние сутки.
+/// Старые сессии в базе остаются навсегда, но карточек им не полагается.
+const SESSION_OPEN_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn opencode_status() -> OpenCodeStatus {
     let Some(db) = opencode_db_path() else {
         return OpenCodeStatus::default();
     };
 
-    let session = sqlite_json(&db, SESSION_QUERY)
-        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned());
-
-    let Some(session) = session else {
+    let Some(rows) = sqlite_json(&db, SESSION_QUERY)
+        .and_then(|value| value.as_array().cloned())
+    else {
         return OpenCodeStatus::default();
     };
 
+    let now = now_ms();
+    let sessions: Vec<OpenCodeSession> = rows
+        .iter()
+        .map(|row| session_status(&db, row, now))
+        // Открытые сессии: те, что трогали за последние сутки. Остальные
+        // остаются в базе навсегда, но карточек им не полагается.
+        .filter(|session| {
+            session
+                .updated_at
+                .is_some_and(|updated| now - updated < SESSION_OPEN_MS)
+        })
+        .collect();
+
+    OpenCodeStatus {
+        available: !sessions.is_empty(),
+        sessions,
+    }
+}
+
+/// Собирает карточку одной сессии: заголовок, запрос, активность.
+fn session_status(db: &Path, row: &serde_json::Value, now: i64) -> OpenCodeSession {
     let text = |key: &str| {
-        session
-            .get(key)
+        row.get(key)
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string()
     };
 
-    let updated_at = session.get("time_updated").and_then(|value| value.as_i64());
-    let files_changed = session.get("summary_files").and_then(|value| value.as_i64());
-    let idle = session
+    let id = text("id");
+    let updated_at = row.get("time_updated").and_then(|value| value.as_i64());
+    let files_changed = row.get("summary_files").and_then(|value| value.as_i64());
+    // Сессию считаем idle, только если она давно не обновлялась: свежая
+    // отметка означает, что OpenCode прямо сейчас работает.
+    let idle = row
         .get("idle_outcome")
         .map(|value| !value.is_null())
         .unwrap_or(false)
-        && updated_at.is_some_and(|updated| now_ms() - updated > IDLE_AFTER_MS);
+        && updated_at.is_some_and(|updated| now - updated > IDLE_AFTER_MS);
 
-    let request = sqlite_json(&db, REQUEST_QUERY)
-        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned())
-        .and_then(|row| row.get("data").and_then(|value| value.as_str()).map(str::to_string))
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+    let request = last_message(db, &id, "user")
         .and_then(|data| data.get("text").and_then(|value| value.as_str()).map(str::to_string))
         .unwrap_or_default();
 
-    OpenCodeStatus {
-        available: true,
+    let activity = if idle {
+        String::new()
+    } else {
+        last_message(db, &id, "assistant")
+            .map(|data| describe_activity(&data, now))
+            .unwrap_or_default()
+    };
+
+    OpenCodeSession {
+        id,
         task: text("title"),
         request,
         model: model_name(&text("model")),
         directory: text("directory"),
         updated_at,
         files_changed,
+        activity,
         idle,
     }
+}
+
+/// Последнее сообщение сессии нужного типа: `data` уже разобранный JSON.
+fn last_message(db: &Path, session_id: &str, kind: &str) -> Option<serde_json::Value> {
+    let query = format!(
+        "select data from session_message where session_id = '{session_id}' \
+         and type = '{kind}' order by seq desc limit 1"
+    );
+
+    sqlite_json(db, &query)
+        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned())
+        .and_then(|row| row.get("data").and_then(|value| value.as_str()).map(str::to_string))
+        .and_then(|data| serde_json::from_str(&data).ok())
+}
+
+/// Что сессия делает прямо сейчас — по частям последнего ответа ассистента.
+///
+/// Активность живёт, пока сообщение свежее: если ассистент ответил давно,
+/// честнее показать пустую строку, чем подвисшее «думает».
+fn describe_activity(data: &serde_json::Value, now: i64) -> String {
+    let created = data
+        .get("time")
+        .and_then(|time| time.get("created"))
+        .and_then(|value| value.as_i64());
+
+    // Сообщение старше `IDLE_AFTER_MS` — работа давно закончилась.
+    if created.is_some_and(|at| now - at > IDLE_AFTER_MS) {
+        return String::new();
+    }
+
+    let Some(parts) = data.get("content").and_then(|value| value.as_array()) else {
+        return String::new();
+    };
+
+    // Идём с конца: важен последний шаг, а не начало ответа.
+    for part in parts.iter().rev() {
+        match part.get("type").and_then(|value| value.as_str()) {
+            Some("tool") => {
+                let running = part
+                    .get("state")
+                    .and_then(|state| state.get("status"))
+                    .and_then(|value| value.as_str())
+                    == Some("running");
+
+                if running {
+                    return tool_activity(part);
+                }
+            }
+            Some("reasoning") => return String::from("думает"),
+            Some("text") => return String::from("пишет ответ"),
+            _ => {}
+        }
+    }
+
+    String::new()
+}
+
+/// Инструмент под рукой: что именно OpenCode делает прямо сейчас.
+fn tool_activity(part: &serde_json::Value) -> String {
+    let name = part.get("name").and_then(|value| value.as_str()).unwrap_or("");
+    let input = part.get("state").and_then(|state| state.get("input"));
+
+    let field = |key: &str| {
+        input
+            .and_then(|input| input.get(key))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+    };
+
+    match name {
+        "edit" | "write" => match file_title(&field("path")) {
+            Some(title) => format!("пишет в файл «{title}»"),
+            None => String::from("правит файлы"),
+        },
+        "read" => match file_title(&field("path")) {
+            Some(title) => format!("читает «{title}»"),
+            None => String::from("читает файлы"),
+        },
+        "shell" => {
+            // Показываем саму команду: по ней видно, чем занят агент.
+            let command = field("command");
+            let command = command.split(['\n', '|', ';']).next().unwrap_or("").trim();
+
+            if command.is_empty() {
+                String::from("запускает команду")
+            } else {
+                format!("запускает «{}»", truncate(command, 60))
+            }
+        }
+        "grep" => format!("ищет «{}»", truncate(&field("pattern"), 40)),
+        "glob" => format!("ищет файлы «{}»", truncate(&field("pattern"), 40)),
+        "webfetch" => format!("открывает {}", truncate(&field("url"), 50)),
+        "question" => String::from("спрашивает"),
+        "task" => String::from("запускает подзадачу"),
+        "" => String::from("работает"),
+        other => format!("использует {other}"),
+    }
+}
+
+/// Имя файла из пути: полный путь в карточку не влезает.
+fn file_title(path: &str) -> Option<String> {
+    let path = path.trim();
+
+    if path.is_empty() {
+        return None;
+    }
+
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .or_else(|| Some(path.to_string()))
+}
+
+fn truncate(text: &str, limit: usize) -> String {
+    let text = text.trim();
+
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+
+    let cut: String = text.chars().take(limit.saturating_sub(1)).collect();
+    format!("{cut}…")
 }
 
 /// В базе модель лежит JSON-строкой вида `{"id":"…","providerID":"…"}`.
@@ -519,7 +749,11 @@ struct Manifest {
 const STATE_UPDATE_QUEUED: u64 = 8;
 const STATE_UPDATE_RUNNING: u64 = 256;
 const STATE_UPDATE_PAUSED: u64 = 512;
-const STATE_UPDATE_STARTED: u64 = 1024;
+
+/// Строка скорости моложе этого — загрузка идёт (Steam шлёт их раз в минуту).
+const DOWNLOAD_FRESH: Duration = Duration::from_secs(120);
+/// Байты, не растующие дольше этого, не считаем живой скоростью.
+const DOWNLOAD_STALE: Duration = Duration::from_secs(20);
 
 /// Значение ключа из формата Valve: `"name"\t\t"Dota 2"`.
 fn acf_value(text: &str, key: &str) -> Option<String> {
@@ -627,19 +861,76 @@ fn pending_download(items: &[Manifest]) -> Option<&Manifest> {
         })
 }
 
-/// Последняя скорость из `content_log.txt`: `Current download rate: 60.386 Mbps`.
-/// Steam пишет мегабиты, карточке нужны байты в секунду.
-fn last_download_rate(root: &Path) -> Option<f64> {
+/// Последняя скорость из `content_log.txt`: `Current download rate: 60.386 Mbps`,
+/// вместе с её возрастом. Steam шлёт эти строки примерно раз в минуту и только
+/// пока действительно качает: после остановки они прекращаются. Свежая строка —
+/// самый честный признак идущей загрузки, ведь `StateFlags` бывает 1026 и без
+/// флага Running (проверено на живом клиенте).
+struct DownloadRate {
+    bytes_per_second: f64,
+    age: Duration,
+}
+
+fn last_download_rate(root: &Path) -> Option<DownloadRate> {
     let log = read_tail(&root.join("logs/content_log.txt"), 256 * 1024)?;
+    let now = now_ms();
 
     log.lines()
         .filter_map(|line| {
             let rest = line.split("Current download rate:").nth(1)?;
             let mbps: f64 = rest.split_whitespace().next()?.parse().ok()?;
 
-            Some(mbps * 1_000_000.0 / 8.0)
+            // Строка начинается с `[2026-10-23 00:59:24]` — возраст берём от него.
+            let age = log_timestamp_ms(line)
+                .map(|at| Duration::from_millis((now - at).max(0) as u64))
+                .unwrap_or_default();
+
+            Some(DownloadRate {
+                bytes_per_second: mbps * 1_000_000.0 / 8.0,
+                age,
+            })
         })
         .next_back()
+}
+
+/// Отметка времени из начала строки лога: `[YYYY-MM-DD HH:MM:SS]`.
+/// Время в логе местное, поэтому сразу приводим его к UTC — так его можно
+/// сравнивать с `now_ms()`.
+fn log_timestamp_ms(line: &str) -> Option<i64> {
+    if !line.starts_with('[') {
+        return None;
+    }
+
+    let stamp = line.get(1..20)?;
+    let (date, time) = stamp.split_once(' ')?;
+    let mut parts = date.split('-').map(str::parse::<i32>);
+    let (year, month, day) = (
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    );
+    let mut clock = time.split(':').map(str::parse::<i64>);
+    let (hour, minute, second) = (
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+    );
+
+    let days = days_since_epoch(year, month, day);
+    Some((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000 - local_offset_ms())
+}
+
+/// Дней от 1970-01-01 до даты — нужен только для сравнения строк лога с «сейчас».
+fn days_since_epoch(year: i32, month: i32, day: i32) -> i64 {
+    // Перевод даты в юлианский день — стандартная формула без внешних крейтов.
+    let year = year - i32::from(month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_shift = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_shift + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+
+    era as i64 * 146_097 + day_of_era as i64 - 719_468
 }
 
 fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
@@ -649,20 +940,30 @@ fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
 }
 
 /// Скорость по приросту скачанных байтов между опросами. Манифест Steam
-/// обновляется чаще, чем строка `Current download rate` в логе, поэтому
-/// дельта точнее; рывки сглаживаем, а нулю не даём затереть живую оценку.
-fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64) -> Option<f64> {
-    let mut sample = None;
+/// обновляется реже, чем идёт загрузка, поэтому дельта не всегда есть; зато
+/// когда байты растут, это прямое доказательство, что Steam качает.
+fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64, stale: Duration) -> Option<f64> {
+    let previous = cache.progress.take();
 
-    if let Some(previous) = cache.progress.take() {
-        let elapsed = previous.at.elapsed().as_secs_f64();
-
-        if previous.app_id == app_id {
-            if downloaded > previous.bytes && elapsed > 0.2 {
-                sample = Some((downloaded - previous.bytes) as f64 / elapsed);
-            }
-        } else {
+    if let Some(previous) = previous {
+        if previous.app_id != app_id {
             cache.rate_ema = None;
+        } else {
+            let elapsed = previous.at.elapsed();
+            if downloaded > previous.bytes && elapsed.as_secs_f64() > 0.2 {
+                let instant = (downloaded - previous.bytes) as f64 / elapsed.as_secs_f64();
+                cache.rate_ema = Some(match cache.rate_ema {
+                    Some(ema) => ema * 0.5 + instant * 0.5,
+                    None => instant,
+                });
+                cache.sample_at = Some(Instant::now());
+            } else if cache
+                .sample_at
+                .is_some_and(|at| at.elapsed() > stale)
+            {
+                // Байты встали: держать прошлую скорость нельзя, это вранье.
+                cache.rate_ema = None;
+            }
         }
     }
 
@@ -671,13 +972,6 @@ fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64) -> Option<f64
         bytes: downloaded,
         at: Instant::now(),
     });
-
-    if let Some(instant) = sample {
-        cache.rate_ema = Some(match cache.rate_ema {
-            Some(ema) => ema * 0.5 + instant * 0.5,
-            None => instant,
-        });
-    }
 
     cache.rate_ema
 }
@@ -713,18 +1007,29 @@ fn steam_status(cache: &mut Cache) -> SteamStatus {
         };
     };
 
-    let state = if download.state_flags & STATE_UPDATE_RUNNING != 0 {
+    let report = last_download_rate(&root);
+    // Свежая строка скорости (минута-две) — значит Steam действительно качает;
+    // прирост байтов это подтверждает, когда манифест успел обновиться.
+    let live = report
+        .as_ref()
+        .filter(|report| report.age < DOWNLOAD_FRESH)
+        .map(|report| report.bytes_per_second);
+    let rate = measured_rate(cache, &download.app_id, download.downloaded, DOWNLOAD_STALE).or(live);
+
+    // Флаг Running Steam на этой машине не ставит даже во время загрузки,
+    // поэтому состояние решает не он, а живая скорость.
+    let state = if rate.is_some() {
+        "загрузка"
+    } else if download.state_flags & STATE_UPDATE_RUNNING != 0
+        && download.state_flags & STATE_UPDATE_PAUSED == 0
+    {
         "загрузка"
     } else if download.state_flags & STATE_UPDATE_QUEUED != 0 {
         "в очереди"
-    } else if download.state_flags & (STATE_UPDATE_PAUSED | STATE_UPDATE_STARTED) != 0 {
-        "пауза"
     } else {
-        "загрузка"
+        "пауза"
     };
 
-    let rate = measured_rate(cache, &download.app_id, download.downloaded)
-        .or_else(|| last_download_rate(&root));
     let remaining = download.total.saturating_sub(download.downloaded);
 
     SteamStatus {
@@ -828,11 +1133,13 @@ fn focus_status() -> FocusStatus {
 // ───────────────────────────── git ─────────────────────────────
 
 /// Git показываем для проекта, в котором идёт сессия OpenCode:
-/// это и есть «текущая работа» на машине.
+/// это и есть «текущая работа» на машине. Сессии идут свежие сверху.
 fn git_workdir(opencode: &OpenCodeStatus) -> PathBuf {
-    let session_dir = PathBuf::from(&opencode.directory);
-    if !opencode.directory.is_empty() && session_dir.is_dir() {
-        return session_dir;
+    if let Some(session) = opencode.sessions.first() {
+        let session_dir = PathBuf::from(&session.directory);
+        if !session.directory.is_empty() && session_dir.is_dir() {
+            return session_dir;
+        }
     }
 
     home_dir().unwrap_or_else(|| PathBuf::from("/"))
@@ -931,6 +1238,148 @@ mod tests {
         assert_eq!(eta_seconds(4000, Some(1000.0)), Some(4));
         assert_eq!(eta_seconds(4000, Some(0.0)), None);
         assert_eq!(eta_seconds(4000, None), None);
+    }
+
+    #[test]
+    fn parses_log_timestamp() {
+        // Лог пишет местное время: в UTC строка обязана сдвинуться ровно
+        // на смещение зоны машины.
+        let stamp = log_timestamp_ms("[2026-10-23 00:59:24] Current download rate: 63.096 Mbps")
+            .expect("отметка времени разбирается");
+
+        assert_eq!(stamp, 1_792_717_164_000 - local_offset_ms());
+        // Без отметки времени строку сравнивать с «сейчас» нельзя.
+        assert_eq!(log_timestamp_ms("stats: (CDN, 33) 18 MB"), None);
+        assert_eq!(log_timestamp_ms("[не дата] мусор"), None);
+    }
+
+    #[test]
+    fn parses_timezone_offset() {
+        // На этой машине зона задана, значит смещение — не ноль и кратно минутам.
+        let offset = local_offset_ms();
+        assert_eq!(offset % 60_000, 0, "смещение зоны не кратно минуте");
+        assert!(offset.abs() <= 14 * 3_600_000, "смещение зоны вне разумных границ");
+    }
+
+    /// Свежая строка скорости означает идущую загрузку, старая — паузу.
+    #[test]
+    fn download_state_follows_rate_freshness() {
+        let root = std::env::temp_dir().join("metricks-steam-test");
+        let logs = root.join("logs");
+        fs::create_dir_all(&logs).expect("каталог логов");
+        let log = logs.join("content_log.txt");
+
+        let local = |offset_seconds: i64| {
+            let at = now_ms() + local_offset_ms() - offset_seconds * 1_000;
+            let seconds = at.div_euclid(1_000);
+            let days = seconds.div_euclid(86_400);
+            let clock = seconds.rem_euclid(86_400);
+            // Обратный перевод к календарной дате: дни от эпохи.
+            let (year, month, day) = civil_from_days(days);
+            format!(
+                "[{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}] Current download rate: 60.0 Mbps",
+                clock / 3_600,
+                clock % 3_600 / 60,
+                clock % 60,
+            )
+        };
+
+        // Строка минуту назад: загрузка идёт.
+        fs::write(&log, format!("{}\n", local(60))).expect("свежий лог");
+        let fresh = last_download_rate(&root).expect("строка найдена");
+        assert!(fresh.age < DOWNLOAD_FRESH, "свежая строка: {:?}", fresh.age);
+
+        // Та же строка, но час назад: загрузка уже не идёт.
+        fs::write(&log, format!("{}\n", local(3_600))).expect("старый лог");
+        let stale = last_download_rate(&root).expect("строка найдена");
+        assert!(stale.age > DOWNLOAD_FRESH, "старая строка: {:?}", stale.age);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Дни от эпохи обратно в календарную дату — нужен тесту выше.
+    fn civil_from_days(days: i64) -> (i64, i64, i64) {
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let day_of_era = z.rem_euclid(146_097);
+        let year_of_era =
+            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+        let year = year_of_era + era * 400;
+        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+        let month_shift = (5 * day_of_year + 2) / 153;
+        let day = day_of_year - (153 * month_shift + 2) / 5 + 1;
+        let month = month_shift + if month_shift < 10 { 3 } else { -9 };
+
+        (year + i64::from(month <= 2), month, day)
+    }
+
+    /// Сообщение ассистента в том же виде, как его пишет OpenCode.
+    fn assistant_message(parts: &str, created: i64) -> serde_json::Value {
+        serde_json::from_str(&format!(
+            "{{\"time\":{{\"created\":{created}}},\"content\":[{parts}]}}"
+        ))
+        .expect("разбор сообщения")
+    }
+
+    #[test]
+    fn reads_running_tool_as_activity() {
+        let now = 1_000_000;
+        let edit = assistant_message(
+            r#"{"type":"reasoning"},{"type":"tool","name":"edit","state":{"status":"running","input":{"path":"/home/fox/prog/metricks/src-tauri/src/status.rs"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&edit, now), "пишет в файл «status.rs»");
+    }
+
+    #[test]
+    fn ignores_finished_tools() {
+        let now = 1_000_000;
+        // Инструмент уже отработал, значит смотрим на предшествующее размышление.
+        let finished = assistant_message(
+            r#"{"type":"reasoning"},{"type":"tool","name":"shell","state":{"status":"completed","input":{"command":"ls"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&finished, now), "думает");
+    }
+
+    #[test]
+    fn names_the_shell_command() {
+        let now = 1_000_000;
+        let shell = assistant_message(
+            r#"{"type":"tool","name":"shell","state":{"status":"running","input":{"command":"git status\ncargo test"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&shell, now), "запускает «git status»");
+    }
+
+    #[test]
+    fn stale_message_has_no_activity() {
+        let now = 1_000_000;
+        let old = assistant_message(r#"{"type":"reasoning"}"#, now - IDLE_AFTER_MS - 1);
+
+        assert_eq!(describe_activity(&old, now), "");
+    }
+
+    #[test]
+    fn plain_answer_reads_as_writing() {
+        let now = 1_000_000;
+        let answer = assistant_message(r#"{"type":"text","text":"готово"}"#, now);
+
+        assert_eq!(describe_activity(&answer, now), "пишет ответ");
+    }
+
+    #[test]
+    fn long_paths_keep_only_the_file_name() {
+        assert_eq!(
+            file_title("/home/fox/prog/metricks/src/index.css").as_deref(),
+            Some("index.css")
+        );
+        assert_eq!(file_title("  ").as_deref(), None);
+        assert_eq!(truncate("абвгде", 4), "абв…");
+        assert_eq!(truncate("абв", 4), "абв");
     }
 
     #[test]

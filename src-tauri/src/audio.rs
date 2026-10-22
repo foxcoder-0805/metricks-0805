@@ -4,6 +4,10 @@
 //! поток разбирается на окна, к ним применяется окно Ханна и БПФ, и
 //! фронтенд получает уже готовые уровни полосок.
 //!
+//! Поверх спектра работает детектор высоты тона: он ищет основной тон
+//! методом YIN и переводит его в ноту, чтобы над полосой шла лента нот
+//! («In the Hall of the Mountain King» виден как `B3 D4 E4 …`).
+//!
 //! Захват живёт в отдельном потоке, чтобы не тормозить опрос состояния
 //! машины: `parec` пишет в pipe, поток читает его и складывает бары в
 //! общий буфер последнего значения.
@@ -36,6 +40,26 @@ const HIGH_HZ: f64 = 16_000.0;
 const MIN_DB: f64 = -72.0;
 const MAX_DB: f64 = -6.0;
 
+/// Границы голоса и инструментов, которые есть смысл распознавать как ноты.
+const PITCH_MIN_HZ: f32 = 80.0;
+const PITCH_MAX_HZ: f32 = 1200.0;
+/// Ниже этой «уверенности» YIN считаем, что тона нет: аккорды и шум не пишем.
+const PITCH_CLARITY: f32 = 0.55;
+/// Порог разностной функции YIN: провал ниже него считается периодом тона.
+const PITCH_THRESHOLD: f32 = 0.15;
+/// Насколько можно промахнуться от чистой ноты, прежде чем рисовать прочерк.
+const PITCH_CENTS: f32 = 30.0;
+/// Сколько кадров подряд должна подтвердиться новая нота, чтобы её сменить:
+/// иначе лента дребезжала бы на вибрато и переходах.
+const PITCH_CONFIRM: u32 = 2;
+/// Сколько нот хранит лента.
+const NOTE_TRAIL: usize = 14;
+
+/// Ноты в 12-равномерном строе: индексы от «до» первой октавы.
+const NOTE_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioBars {
@@ -43,6 +67,10 @@ pub struct AudioBars {
     pub active: bool,
     /// Уровни полосок от 0 до 1.
     pub bars: Vec<f32>,
+    /// Текущая нота, `—` если тон не распознан.
+    pub note: String,
+    /// Лента последних нот: свежая в конце.
+    pub notes: Vec<String>,
 }
 
 /// Захват звука: поток `parec` и последний посчитанный кадр.
@@ -65,6 +93,8 @@ pub fn get_audio_bars() -> AudioBars {
         Some(frame) => AudioBars {
             active: frame.active,
             bars: resample(&frame.bars, BAR_COUNT.load(Ordering::Relaxed)),
+            note: frame.note,
+            notes: frame.notes,
         },
         None => AudioBars::default(),
     }
@@ -73,6 +103,14 @@ pub fn get_audio_bars() -> AudioBars {
 impl AudioBars {
     fn fits(&self, count: usize) -> bool {
         self.bars.len() == count
+    }
+
+    /// Кадр тишины: полоса пустая, лента нот обнуляется.
+    fn silent(count: usize) -> Self {
+        Self {
+            bars: vec![0.0; count],
+            ..Self::default()
+        }
     }
 }
 
@@ -140,6 +178,7 @@ fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
         let mut raw = vec![0u8; 4 * WINDOW];
         let mut samples: Vec<f32> = Vec::with_capacity(WINDOW * 2);
         let mut spectrum = Spectrum::new(WINDOW);
+        let mut pitch = PitchDetector::new();
         let mut last_loud: Option<std::time::Instant> = None;
 
         loop {
@@ -170,13 +209,21 @@ fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
                 }
 
                 let active = last_loud.is_some_and(|at| at.elapsed() < HOLD);
-                let bars = if active {
-                    spectrum.bars(&samples[..WINDOW])
+                let count = BAR_COUNT.load(Ordering::Relaxed);
+                let frame = if active {
+                    pitch.listen(&samples[..WINDOW]);
+                    AudioBars {
+                        active: true,
+                        bars: spectrum.bars(&samples[..WINDOW]),
+                        note: pitch.note(),
+                        notes: pitch.trail(),
+                    }
                 } else {
-                    vec![0.0; BAR_COUNT.load(Ordering::Relaxed)]
+                    pitch.reset();
+                    AudioBars::silent(count)
                 };
 
-                lock().latest = Some(AudioBars { active, bars });
+                lock().latest = Some(frame);
                 samples.drain(..WINDOW / 2);
             }
         }
@@ -199,20 +246,22 @@ pub fn capture_diagnostics() -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// Диагностика: печатает полоски реального системного звука.
+/// Диагностика: печатает полоски и ноты реального системного звука.
 /// `cargo test -- --ignored --nocapture live_audio_dump`
 #[cfg(test)]
 fn live_audio_dump() {
     for _ in 0..25 {
         let frame = get_audio_bars();
         println!(
-            "active={} bars={:?}",
+            "active={} bars={:?} note={} notes={:?}",
             frame.active,
             frame
                 .bars
                 .iter()
                 .map(|level| (level * 9.0).round() as u8)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            frame.note,
+            frame.notes,
         );
 
         thread::sleep(Duration::from_millis(120));
@@ -375,6 +424,232 @@ fn resample(bars: &[f32], count: usize) -> Vec<f32> {
         .collect()
 }
 
+// ───────────────────────────── ноты ─────────────────────────────
+
+/// Определение высоты тона методом YIN (разностная функция с накоплением).
+///
+/// На выходе — нота вида `A4`, пока тон уверенный и близкий к чистому;
+/// иначе — прочерк. Лента запоминает последние ноты, чтобы над полосой
+/// читалась мелодия, а не одна дрожащая буква.
+struct PitchDetector {
+    /// Кольцевое окно анализа: YIN смотрит на два спектральных окна сразу.
+    buffer: Vec<f32>,
+    /// Разностная функция: переиспользуется между кадрами, чтобы не мусорить.
+    difference: Vec<f32>,
+    /// Текущая распознанная нота; `None` — тона нет.
+    note: Option<String>,
+    /// Нота-кандидат: она станет текущей после `PITCH_CONFIRM` кадров подряд.
+    candidate: Option<String>,
+    confirmations: u32,
+    /// Лента нот: свежая в конце.
+    trail: std::collections::VecDeque<String>,
+}
+
+impl PitchDetector {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::with_capacity(PITCH_WINDOW * 2),
+            difference: vec![0.0; PITCH_WINDOW / 2],
+            note: None,
+            candidate: None,
+            confirmations: 0,
+            trail: std::collections::VecDeque::with_capacity(NOTE_TRAIL),
+        }
+    }
+
+    /// Текущая нота строкой: `—`, если тон не распознан.
+    fn note(&self) -> String {
+        self.note.clone().unwrap_or_else(|| String::from("—"))
+    }
+
+    /// Лента последних нот.
+    fn trail(&self) -> Vec<String> {
+        self.trail.iter().cloned().collect()
+    }
+
+    fn reset(&mut self) {
+        self.buffer.clear();
+        self.note = None;
+        self.candidate = None;
+        self.confirmations = 0;
+        self.trail.clear();
+    }
+
+    /// Разбирает очередное окно сэмплов, копя окно анализа.
+    fn listen(&mut self, samples: &[f32]) {
+        self.buffer.extend_from_slice(samples);
+
+        // Держим ровно окно анализа: старое вытесняется.
+        if self.buffer.len() > PITCH_WINDOW {
+            let excess = self.buffer.len() - PITCH_WINDOW;
+            self.buffer.drain(..excess);
+        }
+
+        if self.buffer.len() < PITCH_WINDOW {
+            return;
+        }
+
+        match detect_pitch(&self.buffer, &mut self.difference).and_then(note_name) {
+            Some(note) => self.settle(note),
+            // Тон пропал: держим последнюю ноту до первого уверенного кадра,
+            // чтобы лента не мигала между слогами.
+            None => {
+                self.candidate = None;
+                self.confirmations = 0;
+            }
+        }
+    }
+
+    /// Принимает распознанную ноту, отсеивая дребезг.
+    fn settle(&mut self, note: String) {
+        if self.note.as_deref() == Some(note.as_str()) {
+            self.candidate = None;
+            self.confirmations = 0;
+            return;
+        }
+
+        if self.candidate.as_deref() == Some(note.as_str()) {
+            self.confirmations += 1;
+        } else {
+            self.candidate = Some(note.clone());
+            self.confirmations = 1;
+        }
+
+        if self.confirmations < PITCH_CONFIRM {
+            return;
+        }
+
+        self.note = Some(note.clone());
+        self.candidate = None;
+        self.confirmations = 0;
+
+        // Повторы подряд в ленте не дублируем: это одна и та же нота.
+        if self.trail.back() != Some(&note) {
+            if self.trail.len() == NOTE_TRAIL {
+                self.trail.pop_front();
+            }
+            self.trail.push_back(note);
+        }
+    }
+}
+
+/// Результат детектора: частота и уверенность от 0 до 1.
+#[derive(Debug, Clone, Copy)]
+struct Pitch {
+    hz: f32,
+    clarity: f32,
+}
+
+/// Сколько сэмплов уходит на определение тона. YIN нужен запас в один период
+/// самого низкого тона, поэтому окно анализа шире спектрального.
+const PITCH_WINDOW: usize = 2_048;
+
+/// Ищет основной тон в окне сэмплов. Возвращает `None`, если тона нет.
+fn detect_pitch(samples: &[f32], difference: &mut [f32]) -> Option<Pitch> {
+    let max_lag = (SAMPLE_RATE as f32 / PITCH_MIN_HZ).ceil() as usize;
+    let min_lag = (SAMPLE_RATE as f32 / PITCH_MAX_HZ).floor() as usize;
+
+    if samples.len() <= max_lag || difference.len() <= max_lag + 1 {
+        return None;
+    }
+
+    // Разностная функция: на периоде тона она проваливается почти до нуля.
+    // Сравниваем только те пары, для которых есть полный период — иначе
+    // хвост окна занижает сумму и настоящий период теряется.
+    let span = samples.len() - max_lag;
+    difference[0] = 0.0;
+    for lag in 1..=max_lag {
+        let sum = (0..span)
+            .map(|index| {
+                let delta = samples[index] - samples[index + lag];
+                delta * delta
+            })
+            .sum::<f32>();
+        difference[lag] = sum;
+    }
+
+    // Накопленная нормировка: без неё «ноль» разностной функции ничего не значит.
+    let mut running = 0.0;
+    difference[0] = 1.0;
+    for lag in 1..=max_lag {
+        running += difference[lag];
+        difference[lag] = if running > 0.0 {
+            difference[lag] * lag as f32 / running
+        } else {
+            1.0
+        };
+    }
+
+    // Первый провал ниже порога — кандидат в период; дальше ищем его минимум.
+    let mut lag = min_lag.max(2);
+    while lag < max_lag {
+        if difference[lag] < PITCH_THRESHOLD {
+            while lag + 1 < max_lag && difference[lag + 1] < difference[lag] {
+                lag += 1;
+            }
+
+            let clarity = (1.0 - difference[lag]).clamp(0.0, 1.0);
+            if clarity < PITCH_CLARITY {
+                return None;
+            }
+
+            // Параболическая интерполяция: без неё частота прыгает по бинам лага.
+            let hz = interpolate_hz(difference, lag);
+            return Some(Pitch { hz, clarity });
+        }
+
+        lag += 1;
+    }
+
+    None
+}
+
+/// Уточняет период по трём точкам разностной функции и переводит в герцы.
+fn interpolate_hz(difference: &[f32], lag: usize) -> f32 {
+    // На краю диапазона соседняя точка недоступна: интерполировать нечем.
+    if lag == 0 || lag + 1 >= difference.len() {
+        return SAMPLE_RATE as f32 / lag.max(1) as f32;
+    }
+
+    let (left, center, right) = (difference[lag - 1], difference[lag], difference[lag + 1]);
+
+    let denominator = 2.0 * (left - 2.0 * center + right);
+    let shift = if denominator.abs() > f32::EPSILON {
+        (left - right) / denominator
+    } else {
+        0.0
+    };
+
+    SAMPLE_RATE as f32 / (lag as f32 + shift)
+}
+
+/// Переводит частоту в имя ноты; `—`, если нота далека от чистого строя.
+fn note_name(pitch: Pitch) -> Option<String> {
+    if pitch.clarity < PITCH_CLARITY {
+        return None;
+    }
+
+    // MIDI-номер: 69 = A4 = 440 Гц.
+    let midi = 69.0 + 12.0 * (pitch.hz / 440.0).log2();
+    let rounded = midi.round();
+    let cents = (midi - rounded).abs() * 100.0;
+
+    if cents > PITCH_CENTS {
+        return None;
+    }
+
+    let index = rounded as i32;
+    if !(0..=127).contains(&index) {
+        return None;
+    }
+
+    let name = NOTE_NAMES[(index % 12) as usize];
+    // Октава в стандарте MIDI: 60 — C4.
+    let octave = index / 12 - 1;
+
+    Some(format!("{name}{octave}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,11 +684,54 @@ mod tests {
         assert!(bars[loudest] > 0.5, "полоска тона слишком тихая");
     }
 
-    /// Диагностика: печатает полоски реального системного звука.
+    /// Диагностика: печатает полоски и ноты реального системного звука.
+    /// `cargo test -- --ignored --nocapture live_audio_dump`
     #[test]
     #[ignore]
     fn live_audio_dump() {
         super::live_audio_dump();
+    }
+
+    /// Диагностика: слушает файл (через `ffmpeg`) и печатает распознанные ноты.
+    /// `METRICKS_TRACK=/путь/к/треку.mp3 cargo test -- --ignored --nocapture track_note_dump`
+    #[test]
+    #[ignore]
+    fn track_note_dump() {
+        use std::io::Read as _;
+
+        let Ok(track) = std::env::var("METRICKS_TRACK") else {
+            println!("задай METRICKS_TRACK=/путь/к/файлу.mp3");
+            return;
+        };
+
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v", "error", "-i", &track, "-t", "25", "-f", "f32le", "-ac", "1", "-ar", "44100",
+                "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ffmpeg");
+
+        let mut stdout = child.stdout.take().expect("stdout");
+        let mut raw = vec![0u8; WINDOW * 4];
+        let mut pitch = PitchDetector::new();
+
+        while stdout.read_exact(&mut raw).is_ok() {
+            let samples: Vec<f32> = raw
+                .chunks_exact(4)
+                .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                .collect();
+
+            pitch.listen(&samples);
+            if pitch.note() != "—" {
+                print!("{} ", pitch.note());
+            }
+        }
+
+        let _ = child.kill();
+        println!();
     }
 
     #[test]
@@ -436,5 +754,68 @@ mod tests {
     fn resamples_frames_to_new_width() {
         assert_eq!(resample(&[0.0, 1.0], 4), vec![0.0, 0.0, 1.0, 1.0]);
         assert_eq!(resample(&[], 3), vec![0.0, 0.0, 0.0]);
+    }
+
+    /// Синтетический тон: детектор должен назвать ту же ноту.
+    fn tone(hz: f32) -> Vec<f32> {
+        (0..PITCH_WINDOW)
+            .map(|index| (2.0 * PI * hz * index as f32 / SAMPLE_RATE as f32).sin())
+            .collect()
+    }
+
+    fn detected(signal: &[f32]) -> Option<String> {
+        let mut difference = vec![0.0; PITCH_WINDOW / 2];
+        detect_pitch(signal, &mut difference).and_then(note_name)
+    }
+
+    #[test]
+    fn names_the_note_of_a_pure_tone() {
+        assert_eq!(detected(&tone(440.0)).as_deref(), Some("A4"));
+        assert_eq!(detected(&tone(880.0)).as_deref(), Some("A5"));
+        assert_eq!(detected(&tone(261.63)).as_deref(), Some("C4"));
+        assert_eq!(detected(&tone(146.83)).as_deref(), Some("D3"));
+    }
+
+    #[test]
+    fn silence_has_no_note() {
+        assert!(detected(&[0.0; PITCH_WINDOW]).is_none());
+    }
+
+    #[test]
+    fn out_of_tune_tone_is_not_named() {
+        // Четверть тона выше A4 — это уже не «A» в обиходном смысле.
+        let between: Vec<f32> = (0..PITCH_WINDOW)
+            .map(|index| (2.0 * PI * 452.9 * index as f32 / SAMPLE_RATE as f32).sin())
+            .collect();
+
+        assert!(detected(&between).is_none());
+    }
+
+    #[test]
+    fn trail_collects_notes_without_repeats() {
+        let mut pitch = PitchDetector::new();
+
+        for hz in [440.0, 440.0, 493.88, 493.88, 523.25, 523.25] {
+            // Каждая нота подтверждается дважды — так же, как на живом звуке.
+            for _ in 0..PITCH_CONFIRM {
+                pitch.listen(&tone(hz));
+            }
+        }
+
+        assert_eq!(pitch.note(), "C5");
+        assert_eq!(pitch.trail(), vec!["A4", "B4", "C5"]);
+    }
+
+    #[test]
+    fn trail_is_cleared_on_reset() {
+        let mut pitch = PitchDetector::new();
+        for _ in 0..PITCH_CONFIRM {
+            pitch.listen(&tone(440.0));
+        }
+
+        pitch.reset();
+
+        assert_eq!(pitch.note(), "—");
+        assert!(pitch.trail().is_empty());
     }
 }

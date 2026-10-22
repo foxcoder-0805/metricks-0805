@@ -4,8 +4,8 @@ import { AddCardTile } from './components/AddCardTile'
 import { AudioVisualizer } from './components/AudioVisualizer'
 import { Header } from './components/Header'
 import { StatusCard } from './components/StatusCard'
-import { builtinCards, dashboardStatus, dashboardUser } from './data/dashboard'
-import { formatClock, renderCard } from './data/live'
+import { builtinCards, dashboardStatus } from './data/dashboard'
+import { formatClock, opencodeSessionLines, renderCard } from './data/live'
 import { useAudioBars } from './hooks/useAudioBars'
 import { useStatus } from './hooks/useStatus'
 import type { StatusCard as StatusCardData } from './types'
@@ -21,6 +21,20 @@ export default function App() {
   const cards = [...builtinCards.filter((card) => !dismissed.includes(card.id)), ...added].map(
     (card) => renderCard(card, snapshot),
   )
+
+  // Карточек OpenCode должно быть столько, сколько открыто сессий: каждая
+  // отвечает на вопрос «что делает вот эта сессия прямо сейчас».
+  const sessions = snapshot?.opencode.sessions ?? []
+  const sessionCards: StatusCardData[] = sessions.map((session) => ({
+    id: `opencode-${session.id}`,
+    title: 'OpenCode',
+    lines: opencodeSessionLines(session, sessions.length > 1),
+  }))
+
+  const shownCards = [
+    ...sessionCards.filter((card) => !dismissed.includes(card.id)),
+    ...cards,
+  ]
 
   const dismissCard = (id: string) => {
     setAdded((list) => list.filter((card) => card.id !== id))
@@ -39,10 +53,10 @@ export default function App() {
   return (
     <div className="app">
       <div className="shell">
-        <Header user={dashboardUser} status={dashboardStatus} />
+        <Header login={snapshot?.user.login ?? ''} status={dashboardStatus} />
 
         <main className="grid">
-          {cards.map((card) => (
+          {shownCards.map((card) => (
             <StatusCard key={card.id} card={card} onDismiss={dismissCard} />
           ))}
 
@@ -65,7 +79,7 @@ export default function App() {
             {snapshot ? `обновлено в ${formatClock(snapshot.collectedAt)}` : 'ждём данные'}
           </span>
 
-          <span className="statusbar__item">Карточек: {cards.length}</span>
+          <span className="statusbar__item">Карточек: {shownCards.length}</span>
 
           {dismissed.length > 0 ? (
             <button type="button" className="statusbar__link" onClick={() => setDismissed([])}>

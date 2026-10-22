@@ -51,13 +51,29 @@ export interface AppOption {
 /** Последняя сессия OpenCode. */
 export interface OpenCodeStatus {
   available: boolean
+  /** Открытые сессии: свежие сверху. */
+  sessions: OpenCodeSession[]
+}
+
+/** Одна открытая сессия OpenCode. */
+export interface OpenCodeSession {
+  id: string
   task: string
   request: string
   model: string
   directory: string
   updatedAt: number | null
   filesChanged: number | null
+  /** Что OpenCode делает прямо сейчас; пусто, если ждёт запроса. */
+  activity: string
   idle: boolean
+}
+
+/** Владелец сессии на этой машине. */
+export interface UserStatus {
+  /** Логин: `foxcoder`. */
+  login: string
+  home: string
 }
 
 /** Текущее воспроизведение MPRIS-плеера. */
@@ -133,6 +149,10 @@ export interface AudioBars {
   active: boolean
   /** Уровни полосок от 0 до 1. */
   bars: number[]
+  /** Текущая нота, `—` если тон не распознан. */
+  note: string
+  /** Лента последних нот: свежая в конце. */
+  notes: string[]
 }
 
 /** Срез состояния машины, который отдаёт Rust-слой. */
@@ -144,5 +164,6 @@ export interface StatusSnapshot {
   focus: FocusStatus
   git: GitStatus
   network: NetworkStatus
+  user: UserStatus
   collectedAt: number
 }

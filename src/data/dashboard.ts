@@ -1,29 +1,16 @@
 import type { StatusCard } from '../types'
 
-/** Пользователь в шапке. */
-export const dashboardUser = {
-  name: 'Elisey Lomtev',
-  initials: 'EL',
-  role: 'platform',
-  status: 'online' as const,
-}
-
 /** Состояние доски в шапке. */
 export const dashboardStatus = {
   label: 'В норме',
 }
 
 /**
- * Встроенные карточки. Все три привязаны к живым источникам машины,
+ * Встроенные карточки. Все привязаны к живым источникам машины,
  * поэтому их подписи собираются из снапшота, а не хранятся здесь.
+ * Карточки OpenCode не здесь: их по одной на каждую открытую сессию.
  */
 export const builtinCards: StatusCard[] = [
-  {
-    id: 'opencode',
-    title: 'OpenCode',
-    lines: ['читаем сессию'],
-    source: 'opencode.task',
-  },
   {
     id: 'music',
     title: 'Музыка',

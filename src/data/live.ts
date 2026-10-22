@@ -4,6 +4,7 @@ import type {
   LiveSource,
   MusicStatus,
   NetworkStatus,
+  OpenCodeSession,
   OpenCodeStatus,
   StatusCard,
   StatusSnapshot,
@@ -97,20 +98,60 @@ function formatRate(bytesPerSecond: number): string {
 }
 
 function opencodeTask(status: OpenCodeStatus): string[] {
-  if (!status.available) return ['сессий нет']
+  const session = status.sessions[0]
+  if (!session) return ['сессий нет']
 
-  const details = [formatRelative(status.updatedAt)]
-  if (status.model) details.push(status.model)
-  if (status.idle) details.push('ждёт запроса')
+  const details = [formatRelative(session.updatedAt)]
+  if (session.model) details.push(session.model)
+  if (session.idle) details.push('ждёт запроса')
 
-  return [truncate(status.task || 'сессия без названия', 80), details.join(' · ')]
+  return [truncate(session.task || 'сессия без названия', 80), details.join(' · ')]
 }
 
 function opencodeRequest(status: OpenCodeStatus): string[] {
-  if (!status.available) return ['сессий нет']
+  const session = status.sessions[0]
+  if (!session) return ['сессий нет']
 
-  const request = status.request || status.task || 'запрос не найден'
-  return [truncate(request, 90), formatRelative(status.updatedAt)]
+  const request = session.request || session.task || 'запрос не найден'
+  return [truncate(request, 90), formatRelative(session.updatedAt)]
+}
+
+/**
+ * Строки карточки одной сессии OpenCode. Заголовок самой карточки общий,
+ * поэтому первая строка — название работы, дальше — что происходит сейчас,
+ * а в конце время и модель. Активность показываем только когда она есть.
+ */
+export function opencodeSessionLines(
+  session: OpenCodeSession,
+  many: boolean,
+): string[] {
+  const lines = [truncate(session.task || 'сессия без названия', 80)]
+
+  if (session.activity) {
+    lines.push(session.activity)
+  } else if (session.idle) {
+    lines.push('ждёт запроса')
+  }
+
+  const details = [formatRelative(session.updatedAt)]
+  if (session.model) details.push(session.model)
+  // Каталог нужен, только когда сессий несколько — иначе это шум.
+  if (many && session.directory) {
+    details.push(shortPath(session.directory))
+  }
+
+  lines.push(details.join(' · '))
+
+  return lines
+}
+
+/** Короткий путь: домашка сокращается до `~`, лишние уровни отбрасываются. */
+function shortPath(path: string): string {
+  const home = path.match(/^\/home\/[^/]+/)
+  const trimmed = home ? path.replace(home[0], '~') : path
+  const parts = trimmed.split('/')
+
+  return parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : trimmed
 }
 
 function musicTrack(status: MusicStatus): string[] {
