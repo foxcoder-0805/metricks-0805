@@ -525,6 +525,36 @@ button {
 
 /* ─────────────── подвал ─────────────── */
 
+/* Спектр системного звука: полоса во всю ширину перед статусбаром. */
+.visualizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 46px;
+  margin-top: 20px;
+  padding: 0 4px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 320ms ease, transform 320ms ease;
+}
+
+.visualizer--on {
+  opacity: 1;
+  transform: none;
+}
+
+.visualizer__bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--purple-200), var(--purple-400));
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.35);
+  transform: scaleY(0.02);
+  transform-origin: bottom;
+  transition: transform 90ms linear;
+}
+
 .statusbar {
   display: flex;
   align-items: center;

@@ -127,6 +127,14 @@ export interface NetworkStatus {
   signal: number | null
 }
 
+/** Кадр спектра системного звука для полосы внизу окна. */
+export interface AudioBars {
+  /** Есть звук прямо сейчас (или был мгновение назад). */
+  active: boolean
+  /** Уровни полосок от 0 до 1. */
+  bars: number[]
+}
+
 /** Срез состояния машины, который отдаёт Rust-слой. */
 export interface StatusSnapshot {
   opencode: OpenCodeStatus
