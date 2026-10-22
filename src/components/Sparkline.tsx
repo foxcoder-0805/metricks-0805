@@ -9,7 +9,11 @@ interface SparklineProps {
   height?: number
 }
 
-/** Мини-график в KPI-карточке. Рисуется в viewBox — деталей тут не нужно. */
+/**
+ * Мини-график в KPI-карточке. Рисуется в viewBox — деталей тут не нужно.
+ * viewBox растягивается по ширине контейнера, поэтому обводка
+ * помечена non-scaling-stroke, иначе при растяжении она станет жирной.
+ */
 export function Sparkline({ points, color = chartColor(1), width = 96, height = 34 }: SparklineProps) {
   const gradientId = `spark-${useId().replace(/[^a-zA-Z0-9]/g, '')}`
 
@@ -29,7 +33,13 @@ export function Sparkline({ points, color = chartColor(1), width = 96, height = 
   const area = `${line} L ${width} ${height} L 0 ${height} Z`
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.45" />
@@ -37,7 +47,15 @@ export function Sparkline({ points, color = chartColor(1), width = 96, height = 
         </linearGradient>
       </defs>
       <path d={area} fill={`url(#${gradientId})`} />
-      <path d={line} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <path
+        d={line}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   )
 }
