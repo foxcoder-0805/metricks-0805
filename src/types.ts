@@ -6,6 +6,15 @@ export type LiveSource =
   | 'music.player'
   | 'steam.download'
   | 'steam.state'
+  | 'system.memory'
+  | 'system.disk'
+  | 'system.load'
+  | 'focus.window'
+  | 'focus.app'
+  | 'git.branch'
+  | 'git.changes'
+  | 'network.connection'
+  | 'network.wifi'
 
 /** Карточка статуса на доске. */
 export interface StatusCard {
@@ -26,10 +35,8 @@ export interface MetricOption {
   id: string
   /** Название показателя в списке выбора. */
   label: string
-  /** Живой источник, если показатель можно отследить на машине. */
-  source?: LiveSource
-  /** Статичная подпись для показателей без источника. */
-  value?: string
+  /** Живой источник на машине: всё, что можно добавить, реально читается. */
+  source: LiveSource
 }
 
 /** Приложение, доступное для добавления на доску. */
@@ -73,10 +80,54 @@ export interface SteamStatus {
   state: string
 }
 
+/** Память, диск, нагрузка и время работы машины. */
+export interface SystemStatus {
+  available: boolean
+  memoryUsed: number | null
+  memoryTotal: number | null
+  diskUsed: number | null
+  diskTotal: number | null
+  /** Средняя загрузка за последнюю минуту. */
+  load: number | null
+  /** Время работы в секундах. */
+  uptime: number | null
+}
+
+/** Окно, которое сейчас в фокусе (Hyprland). */
+export interface FocusStatus {
+  available: boolean
+  app: string
+  title: string
+  workspace: string
+}
+
+/** Git-состояние проекта, в котором идёт сессия OpenCode. */
+export interface GitStatus {
+  available: boolean
+  branch: string
+  /** Изменённых файлов; `null` — посчитать не удалось. */
+  changed: number | null
+  directory: string
+}
+
+/** Активное сетевое подключение из NetworkManager. */
+export interface NetworkStatus {
+  available: boolean
+  connection: string
+  device: string
+  /** SSID для Wi-Fi, иначе пустая строка. */
+  wifi: string
+  signal: number | null
+}
+
 /** Срез состояния машины, который отдаёт Rust-слой. */
 export interface StatusSnapshot {
   opencode: OpenCodeStatus
   music: MusicStatus
   steam: SteamStatus
+  system: SystemStatus
+  focus: FocusStatus
+  git: GitStatus
+  network: NetworkStatus
   collectedAt: number
 }

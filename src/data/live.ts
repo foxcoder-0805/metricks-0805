@@ -1,10 +1,14 @@
 import type {
+  FocusStatus,
+  GitStatus,
   LiveSource,
   MusicStatus,
+  NetworkStatus,
   OpenCodeStatus,
   StatusCard,
   StatusSnapshot,
   SteamStatus,
+  SystemStatus,
 } from '../types'
 
 /** «N мин назад» по отметке времени. */
@@ -40,6 +44,35 @@ function formatDuration(seconds: number): string {
 
 function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text
+}
+
+const GIB = 1024 ** 3
+
+/** Байты в гигабайтах: `31.1 ГБ`. */
+function formatGib(bytes: number): string {
+  const value = bytes / GIB
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ГБ`
+}
+
+/** Русская форма слова по числу. */
+function plural(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10
+  const mod100 = count % 100
+
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
+  return many
+}
+
+/** Секунды в «3 дн 4 ч», «5 ч 26 мин» или «12 мин». */
+function formatUptime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+
+  if (days > 0) return `${days} дн ${hours} ч`
+  if (hours > 0) return `${hours} ч ${minutes % 60} мин`
+  return `${minutes} мин`
 }
 
 function opencodeTask(status: OpenCodeStatus): string[] {
@@ -95,6 +128,95 @@ function steamState(status: SteamStatus): string[] {
   return [status.state || 'запущен', status.game || 'загрузок нет']
 }
 
+function systemMemory(status: SystemStatus): string[] {
+  if (!status.available || status.memoryUsed === null || !status.memoryTotal) {
+    return ['нет данных о памяти']
+  }
+
+  const percent = Math.round((status.memoryUsed / status.memoryTotal) * 100)
+  return [`${percent}% занято`, `${formatGib(status.memoryUsed)} из ${formatGib(status.memoryTotal)}`]
+}
+
+function systemDisk(status: SystemStatus): string[] {
+  if (!status.available || status.diskUsed === null || !status.diskTotal) {
+    return ['нет данных о диске']
+  }
+
+  const percent = Math.round((status.diskUsed / status.diskTotal) * 100)
+  return [`${percent}% занято`, `${formatGib(status.diskTotal - status.diskUsed)} свободно`]
+}
+
+function systemLoad(status: SystemStatus): string[] {
+  if (!status.available || status.load === null) return ['нет данных о нагрузке']
+
+  const lines = [`${status.load.toFixed(2)} за минуту`]
+  if (status.uptime !== null) lines.push(`работает ${formatUptime(status.uptime)}`)
+
+  return lines
+}
+
+function focusWindow(status: FocusStatus): string[] {
+  if (!status.available) return ['нет активного окна']
+
+  const details = [status.app || 'без класса']
+  if (status.workspace) details.push(`рабочий стол ${status.workspace}`)
+
+  return [truncate(status.title || status.app, 80), details.join(' · ')]
+}
+
+function focusApp(status: FocusStatus): string[] {
+  if (!status.available) return ['нет активного окна']
+
+  return [
+    status.app || 'без класса',
+    status.workspace ? `рабочий стол ${status.workspace}` : 'рабочий стол неизвестен',
+  ]
+}
+
+/** «изменено 2 файла», «изменён 1 файл» или «дерево чисто». */
+function changesLine(changed: number): string {
+  if (changed === 0) return 'дерево чисто'
+
+  const word = plural(changed, 'файл', 'файла', 'файлов')
+  return changed % 10 === 1 && changed % 100 !== 11
+    ? `изменён ${changed} ${word}`
+    : `изменено ${changed} ${word}`
+}
+
+function gitBranch(status: GitStatus): string[] {
+  if (!status.available) return ['не git-репозиторий']
+
+  const details = status.changed === null ? status.directory || 'изменения неизвестны' : changesLine(status.changed)
+  return [status.branch || 'без ветки', details]
+}
+
+function gitChanges(status: GitStatus): string[] {
+  if (!status.available) return ['не git-репозиторий']
+
+  const where = status.directory ? `в ${status.directory}` : 'в проекте сессии'
+  if (status.changed === null) return ['изменения не посчитать', where]
+
+  const headline =
+    status.changed === 0
+      ? 'дерево чисто'
+      : `${status.changed} ${plural(status.changed, 'файл', 'файла', 'файлов')}`
+
+  return [headline, where]
+}
+
+function networkConnection(status: NetworkStatus): string[] {
+  if (!status.available) return ['нет подключения']
+
+  return [status.connection || 'без имени', status.device || 'без интерфейса']
+}
+
+function networkWifi(status: NetworkStatus): string[] {
+  if (!status.available) return ['нет подключения']
+  if (!status.wifi) return ['не Wi-Fi', status.device || status.connection]
+
+  return [status.wifi, status.signal === null ? status.device : `сигнал ${status.signal}%`]
+}
+
 /** Строки карточки по живому источнику. */
 export function sourceLines(source: LiveSource, snapshot: StatusSnapshot | null): string[] {
   if (!snapshot) return ['нет данных']
@@ -112,6 +234,24 @@ export function sourceLines(source: LiveSource, snapshot: StatusSnapshot | null)
       return steamDownload(snapshot.steam)
     case 'steam.state':
       return steamState(snapshot.steam)
+    case 'system.memory':
+      return systemMemory(snapshot.system)
+    case 'system.disk':
+      return systemDisk(snapshot.system)
+    case 'system.load':
+      return systemLoad(snapshot.system)
+    case 'focus.window':
+      return focusWindow(snapshot.focus)
+    case 'focus.app':
+      return focusApp(snapshot.focus)
+    case 'git.branch':
+      return gitBranch(snapshot.git)
+    case 'git.changes':
+      return gitChanges(snapshot.git)
+    case 'network.connection':
+      return networkConnection(snapshot.network)
+    case 'network.wifi':
+      return networkWifi(snapshot.network)
     default:
       return ['нет данных']
   }
