@@ -1,15 +1,18 @@
 import { useRef, useState } from 'react'
 import { AddCardDialog } from './components/AddCardDialog'
 import { AddCardTile } from './components/AddCardTile'
+import { AudioVisualizer } from './components/AudioVisualizer'
 import { Header } from './components/Header'
 import { StatusCard } from './components/StatusCard'
 import { builtinCards, dashboardStatus, dashboardUser } from './data/dashboard'
 import { formatClock, renderCard } from './data/live'
+import { useAudioBars } from './hooks/useAudioBars'
 import { useStatus } from './hooks/useStatus'
 import type { StatusCard as StatusCardData } from './types'
 
 export default function App() {
   const { snapshot, error } = useStatus()
+  const audio = useAudioBars()
   const [dismissed, setDismissed] = useState<string[]>([])
   const [added, setAdded] = useState<StatusCardData[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -45,6 +48,8 @@ export default function App() {
 
           <AddCardTile onClick={() => setDialogOpen(true)} />
         </main>
+
+        <AudioVisualizer frame={audio} />
 
         <footer className="statusbar">
           <span className="statusbar__item">
