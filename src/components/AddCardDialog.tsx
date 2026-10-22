@@ -40,7 +40,7 @@ export function AddCardDialog({ snapshot, onClose, onAdd }: AddCardDialogProps) 
     onAdd({
       id: '',
       title: app.title,
-      lines: metric.value ? [metric.value] : [],
+      lines: sourceLines(metric.source, snapshot),
       source: metric.source,
     })
     onClose()
@@ -107,10 +107,10 @@ export function AddCardDialog({ snapshot, onClose, onAdd }: AddCardDialogProps) 
                 >
                   <span className="metric__label">
                     {item.label}
-                    {item.source ? <span className="metric__live">с машины</span> : null}
+                    <span className="metric__live">с машины</span>
                   </span>
                   <span className="metric__value">
-                    {item.source ? sourceLines(item.source, snapshot).join(' · ') : item.value}
+                    {sourceLines(item.source, snapshot).join(' · ')}
                   </span>
                 </button>
               ))}

@@ -2,7 +2,7 @@
 
 Desktop status dashboard built with [Tauri v2](https://tauri.app), React 19, TypeScript and Vite.
 
-Dark UI with purple accents and rounded cards. The board shows three status cards — what OpenCode is doing right now, what music is playing and how far a Steam download has gone — plus a tile that adds your own cards on top of them. Card captions come from the machine itself, not from a backend.
+Dark UI with purple accents and rounded cards. The board shows three status cards — what OpenCode is doing right now, what music is playing and how far a Steam download has gone — plus a tile that adds more cards. Every metric in the catalog is read from the machine (memory, disk, the focused window, git, the network), so there are no placeholder captions. Card captions come from the machine itself, not from a backend.
 
 ## Requirements
 
@@ -11,15 +11,15 @@ Dark UI with purple accents and rounded cards. The board shows three status card
 | Node.js | 20.19+ or 22.12+ |
 | Rust | 1.77.2+ |
 | Linux | `webkit2gtk-4.1`, `libayatana-appindicator3`, `librsvg` |
-| Runtime tools | `sqlite3`, `busctl` |
+| Runtime tools | `sqlite3`, `busctl`, `df`, `git`; optional `hyprctl` for the focused window and `nmcli` for the network |
 
 On Arch/Omarchy:
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1 libayatana-appindicator3 librsvg xdo rust sqlite systemd
+sudo pacman -S --needed webkit2gtk-4.1 libayatana-appindicator3 librsvg xdo rust sqlite systemd git coreutils networkmanager
 ```
 
-`sqlite3` reads the OpenCode database and `busctl` talks to MPRIS players; both ship with the packages above. If a tool is missing, only the matching card falls back to "no data".
+`sqlite3` reads the OpenCode database and `busctl` talks to MPRIS players; both ship with the packages above. Only the collectors whose tools and files are present produce data: a missing tool leaves the matching card on "нет данных" instead of inventing values.
 
 ## Getting started
 
@@ -52,13 +52,17 @@ The dashboard works fully offline: there is no backend and no network calls. The
 | OpenCode | `~/.local/share/opencode/opencode.db` — the most recently updated session: title, last request, model, idle state |
 | Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist and position |
 | Steam | Steam process and `logs/content_log.txt` — the game being downloaded and its progress, with the name from `steamapps/appmanifest_<id>.acf` |
+| System | `/proc/meminfo` (used memory), `/proc/loadavg`, `/proc/uptime` and `df -B1 /` (root disk usage) |
+| Window | `hyprctl activewindow -j` — the class, title and workspace of the focused window |
+| Git | `git -C <session directory> rev-parse` and `status --porcelain` — the branch and the number of changed files in the OpenCode project |
+| Network | `nmcli device` — the active connection; `nmcli device wifi` adds the SSID and signal level for Wi-Fi |
 
-Everything degrades honestly: without a session the card says "сессий нет", without a player — "ничего не играет", without Steam — "не установлен".
+Everything degrades honestly: without a session the card says "сессий нет", without a player — "ничего не играет", without Steam — "не установлен", without a Hyprland window — "нет активного окна", outside a repository — "не git-репозиторий", without a connection — "нет подключения".
 
 Other files:
 
 - `src/data/dashboard.ts` — the user shown in the header and the three built-in cards.
-- `src/data/apps.ts` — the catalog of applications and metrics. Metrics of OpenCode, music and Steam are bound to live sources; the rest keep a static caption.
+- `src/data/apps.ts` — the catalog of applications and metrics. Every metric is bound to a live source; nothing is a static caption.
 - `src/data/live.ts` — turns a status snapshot into card captions.
 
 Cards added from the catalog live in memory for the current session only.
@@ -108,4 +112,4 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 
 - Top row: three status cards. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every 5 seconds.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
-- Second row: a `+` tile in place of the fourth card. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Metrics marked "с машины" stay live, the rest keep a static caption.
+- Second row: a `+` tile in place of the fourth card. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Every metric is live and marked "с машины" in the dialog.
