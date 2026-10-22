@@ -49,7 +49,11 @@ export default function App() {
         <footer className="statusbar">
           <span className="statusbar__item">
             <span className="chip__dot" />
-            {error ? 'нет данных с машины' : 'живые данные с машины'}
+            {error
+              ? snapshot
+                ? 'связь с машиной потеряна'
+                : 'нет данных с машины'
+              : 'живые данные с машины'}
           </span>
 
           <span className="statusbar__item">
