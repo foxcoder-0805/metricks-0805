@@ -1,6 +1,6 @@
 import { embedded } from '../data/embedded'
 import { getApiBase } from './config'
-import type { Bars, Range, Series, Summary } from './types'
+import type { Range, Series, Summary } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -21,10 +21,6 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
     if (path.startsWith('/api/series')) {
       const url = new URL(path, 'http://localhost')
       return embedded.series((url.searchParams.get('range') as Range) || '24h') as T
-    }
-    if (path.startsWith('/api/bars')) {
-      const url = new URL(path, 'http://localhost')
-      return embedded.bars((url.searchParams.get('range') as Range) || '24h') as T
     }
     throw new ApiError('unknown endpoint', 0)
   }
@@ -57,5 +53,4 @@ export const api = {
   health: (signal?: AbortSignal) => request<{ ok: boolean }>('/api/health', signal),
   summary: (signal?: AbortSignal) => request<Summary>('/api/summary', signal),
   series: (range: Range, signal?: AbortSignal) => request<Series>(`/api/series?range=${range}`, signal),
-  bars: (range: Range, signal?: AbortSignal) => request<Bars>(`/api/bars?range=${range}`, signal),
 }

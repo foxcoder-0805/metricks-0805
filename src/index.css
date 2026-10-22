@@ -268,20 +268,11 @@ button {
   gap: 20px;
 }
 
-.col-3 {
-  grid-column: span 3;
-}
 .col-4 {
   grid-column: span 4;
 }
-.col-7 {
-  grid-column: span 7;
-}
 .col-8 {
   grid-column: span 8;
-}
-.col-12 {
-  grid-column: span 12;
 }
 
 /* ─────────────── карточка ─────────────── */
@@ -310,67 +301,32 @@ button {
   box-shadow: var(--shadow-inset);
 }
 
-.card__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.card__title {
-  font-size: 19px;
-  font-weight: 620;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-
-.card__sub {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
-.card__body {
-  flex: 1;
-  min-height: 0;
-}
-
-/* ─────────────── KPI ───────────────
- * Композиция повторяет шаблон: крупное значение в левом верхнем углу,
+/* ─────────────── карточка источника ───────────────
+ * Композиция повторяет шаблон: крупное название в левом верхнем углу,
  * круглый бейдж со стрелкой тренда — в правом верхнем,
- * подпись с дельтой — внизу слева.
+ * подпись — внизу слева.
  */
 
-.card--kpi {
-  min-height: 196px;
+.card--source {
+  min-height: 200px;
   padding: 19px 22px 18px;
 }
 
-.kpi__top {
+.source__top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.kpi__value {
-  font-size: 32px;
+.source__title {
+  font-size: 30px;
   font-weight: 620;
-  letter-spacing: -0.035em;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
-.kpi__unit {
-  margin-left: 6px;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-.kpi__badge {
+.source__badge {
   flex: none;
   display: grid;
   place-items: center;
@@ -382,65 +338,140 @@ button {
   color: var(--purple-200);
 }
 
-.kpi__badge--bad {
+.source__badge--bad {
   border-color: rgba(168, 85, 247, 0.2);
   background: rgba(124, 58, 237, 0.1);
   color: var(--muted);
 }
 
-.kpi__caption {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin-top: 30px;
+.source__spark {
+  margin-top: 24px;
+  opacity: 0.55;
 }
 
-.kpi__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.source__spark svg {
+  display: block;
+  width: 100%;
+  height: 44px;
+}
+
+.source__caption {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.source__headline {
   color: var(--text-dim);
   font-size: 13px;
 }
 
-.kpi__label svg {
-  color: var(--muted);
-}
-
-.kpi__meta {
+.source__meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   color: var(--muted-dim);
   font-size: 12px;
 }
 
-.kpi__delta {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.source__value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
   font-weight: 550;
-  font-variant-numeric: tabular-nums;
 }
 
-.kpi__delta--good {
-  color: var(--purple-300);
-}
-
-.kpi__delta--bad {
+.source__unit {
   color: var(--muted);
 }
 
-.kpi__spark {
-  margin-top: auto;
-  padding-top: 14px;
-  opacity: 0.6;
+.source__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-weight: 550;
 }
 
-.kpi__spark svg {
-  display: block;
-  width: 100%;
-  height: 36px;
+.source__delta--good {
+  color: var(--purple-300);
+}
+
+.source__delta--bad {
+  color: var(--muted);
+}
+
+.source__note {
+  color: var(--muted-dim);
+}
+
+/* ─────────────── большая карточка ─────────────── */
+
+.card--overview {
+  padding: 24px 26px 22px;
+}
+
+.overview__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 26px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.overview__figure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.overview__value {
+  font-size: 46px;
+  font-weight: 640;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview__unit {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.overview__text {
+  margin-left: auto;
+  max-width: 420px;
+}
+
+.overview__title {
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.overview__label {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.overview__chart {
+  margin-top: 6px;
+}
+
+.overview__note {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 /* ─────────────── графики ─────────────── */
@@ -555,85 +586,6 @@ button {
   font-size: 12px;
 }
 
-/* ─────────────── гейдж ─────────────── */
-
-.gauge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.gauge__value {
-  font-size: 26px;
-  font-weight: 620;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
-.gauge__label {
-  color: var(--muted);
-  font-size: 12.5px;
-  text-align: center;
-}
-
-.gauge__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 18px;
-}
-
-/* ─────────────── таблица ─────────────── */
-
-.table-wrap {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line-soft);
-  overflow: hidden;
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.table th {
-  padding: 10px 14px;
-  text-align: left;
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  background: rgba(124, 58, 237, 0.09);
-  border-bottom: 1px solid var(--line);
-}
-
-.table td {
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.table tbody tr:hover td {
-  background: rgba(168, 85, 247, 0.05);
-}
-
-.table td.num {
-  font-family: var(--font-mono);
-  text-align: right;
-}
-
-.table td:first-child {
-  color: var(--text);
-  font-weight: 550;
-}
-
 /* ─────────────── подвал ─────────────── */
 
 .statusbar {
@@ -720,17 +672,6 @@ button {
   filter: brightness(1.1);
 }
 
-.btn--ghost {
-  background: var(--surface-3);
-  border-color: var(--line);
-  color: var(--text-dim);
-}
-
-.btn--ghost:hover {
-  border-color: rgba(168, 85, 247, 0.45);
-  color: var(--purple-200);
-}
-
 /* ─────────────── состояния ─────────────── */
 
 .overlay {
@@ -763,26 +704,9 @@ button {
   font-size: 12px;
 }
 
-.skeleton {
-  border-radius: var(--r-md);
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease infinite;
-}
-
-@keyframes shimmer {
-  to {
-    background-position: -135% 0;
-  }
-}
-
 /* ─────────────── адаптив ─────────────── */
 
 @media (max-width: 1240px) {
-  .col-3 {
-    grid-column: span 6;
-  }
-  .col-7,
   .col-8 {
     grid-column: span 12;
   }
@@ -795,9 +719,7 @@ button {
   .app {
     padding: 18px 16px 26px;
   }
-  .col-3,
   .col-4,
-  .col-7,
   .col-8 {
     grid-column: span 12;
   }

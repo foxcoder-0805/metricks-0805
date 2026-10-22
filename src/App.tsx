@@ -1,21 +1,16 @@
 import { useState } from 'react'
 import { getApiBase, setApiBase } from './api/config'
 import { RANGES, type Range } from './api/types'
-import { AreaChart } from './components/AreaChart'
-import { BarChart } from './components/BarChart'
-import { Card } from './components/Card'
-import { DataTable } from './components/DataTable'
-import { DonutChart } from './components/DonutChart'
 import { Header } from './components/Header'
-import { KpiCard } from './components/KpiCard'
-import { RadialGauge } from './components/RadialGauge'
+import { OverviewCard } from './components/OverviewCard'
+import { SourceCard } from './components/SourceCard'
 import { useDashboard } from './hooks/useDashboard'
 import { formatClock } from './lib/format'
 
 export default function App() {
   const [range, setRange] = useState<Range>('24h')
   const [apiBase, setApiBaseState] = useState(() => getApiBase())
-  const { summary, series, bars, error, loading, updatedAt, refresh } = useDashboard(range, apiBase)
+  const { summary, series, error, loading, updatedAt, refresh } = useDashboard(range, apiBase)
 
   const periodLabel = RANGES.find((item) => item.id === range)?.label ?? '24 часа'
 
@@ -45,8 +40,7 @@ export default function App() {
             <p className="overlay__hint">
               {error}
               <br />
-              Проверьте адрес <code>{apiBase}</code> или запустите локальный мок:{' '}
-              <code>npm run mock</code>
+              Проверьте адрес <code>{apiBase}</code> в настройках источника данных.
             </p>
             <button type="button" className="btn" onClick={refresh}>
               Повторить
@@ -54,41 +48,11 @@ export default function App() {
           </div>
         ) : (
           <main className="grid">
-            {(summary?.kpis ?? []).map((kpi) => (
-              <KpiCard key={kpi.id} kpi={kpi} periodLabel={periodLabel} />
+            {(summary?.sources ?? []).map((source) => (
+              <SourceCard key={source.id} source={source} />
             ))}
 
-            <Card
-              className="col-8"
-              title="Трафик"
-              subtitle={`Динамика по источникам за ${periodLabel}`}
-            >
-              <AreaChart data={series} height={280} unit="req/s" />
-            </Card>
-
-            <Card className="col-4" title={summary?.donuts[0]?.label ?? 'Источники трафика'}>
-              <DonutChart donut={summary?.donuts[0] ?? null} />
-            </Card>
-
-            <Card className="col-8" title="Нагрузка на хранилище" subtitle={`Чтения и записи за ${periodLabel}`}>
-              <BarChart data={bars} height={240} unit="ops" />
-            </Card>
-
-            <Card className="col-4" title="Ресурсы кластера" subtitle="Текущая загрузка">
-              <div className="gauge__grid">
-                {(summary?.gauges ?? []).map((gauge) => (
-                  <RadialGauge key={gauge.id} gauge={gauge} />
-                ))}
-              </div>
-            </Card>
-
-            <Card
-              className="col-12"
-              title={summary?.table.id === 'regions' ? 'Регионы' : 'Детализация'}
-              subtitle="Задержка p95 и количество ошибок по площадкам"
-            >
-              <DataTable table={summary?.table ?? null} />
-            </Card>
+            <OverviewCard overview={summary?.overview ?? null} series={series} periodLabel={periodLabel} unit="req/s" />
           </main>
         )}
 
