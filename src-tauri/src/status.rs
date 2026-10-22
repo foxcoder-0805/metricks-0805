@@ -17,12 +17,17 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
 /// Сколько последних секунд сессии считаются «сейчас работающей».
 const IDLE_AFTER_MS: i64 = 5 * 60 * 1000;
+
+/// Опрос идёт раз в секунду, но `git status` на большом репозитории может
+/// считаться сотни миллисекунд — перечитываем его реже.
+const GIT_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -69,8 +74,15 @@ pub struct SteamStatus {
     pub running: bool,
     /// Игра, которую качает или обновляет клиент.
     pub game: String,
-    /// Процент загрузки, если его удалось достать из лога.
+    /// Процент загрузки по манифесту игры.
     pub percent: Option<f64>,
+    /// Скачано и всего байт по манифесту.
+    pub downloaded: Option<u64>,
+    pub total: Option<u64>,
+    /// Скорость в байтах в секунду.
+    pub rate: Option<u64>,
+    /// Сколько секунд осталось при текущей скорости.
+    pub eta: Option<u64>,
     /// Человеческое состояние: «не запущен», «загрузка», «пауза»…
     pub state: String,
 }
@@ -152,19 +164,57 @@ pub fn get_status() -> StatusSnapshot {
 }
 
 pub fn collect() -> StatusSnapshot {
+    let mut guard = CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
+    let cache = guard.get_or_insert_with(Cache::default);
+
     let opencode = opencode_status();
-    let git = git_status(&git_workdir(&opencode));
+    let git = fresh(&mut cache.git, GIT_TTL, || git_status(&git_workdir(&opencode)));
 
     StatusSnapshot {
         opencode,
         music: music_status(),
-        steam: steam_status(),
+        steam: steam_status(cache),
         system: system_status(),
         focus: focus_status(),
         git,
         network: network_status(),
         collected_at: now_ms(),
     }
+}
+
+/// Кэш между опросами: тяжёлые источники плюс предыдущий замер загрузки Steam.
+#[derive(Default)]
+struct Cache {
+    git: Option<(Instant, GitStatus)>,
+    progress: Option<Progress>,
+    /// Сглаженная скорость загрузки в байтах в секунду.
+    rate_ema: Option<f64>,
+}
+
+/// Замер прогресса загрузки: по приросту байтов считаем живую скорость,
+/// потому что `Current download rate` в логе Steam пишется раз в минуту.
+struct Progress {
+    app_id: String,
+    bytes: u64,
+    at: Instant,
+}
+
+static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+
+fn fresh<T: Clone>(
+    slot: &mut Option<(Instant, T)>,
+    ttl: Duration,
+    build: impl FnOnce() -> T,
+) -> T {
+    if let Some((at, value)) = slot.as_ref() {
+        if at.elapsed() < ttl {
+            return value.clone();
+        }
+    }
+
+    let value = build();
+    *slot = Some((Instant::now(), value.clone()));
+    value
 }
 
 fn now_ms() -> i64 {
@@ -454,98 +504,185 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&buffer).into_owned())
 }
 
-#[derive(Debug, PartialEq)]
-struct Download {
+/// Состояние обновления из `steamapps/appmanifest_<id>.acf`.
+#[derive(Debug)]
+struct Manifest {
     app_id: String,
-    percent: Option<f64>,
-    paused: bool,
+    name: String,
+    state_flags: u64,
+    downloaded: u64,
+    total: u64,
+    /// Время правки файла: свежий манифест — актуальная загрузка.
+    modified: SystemTime,
 }
 
-/// Разбирает строку `content_log.txt`. Формат у Valve менялся, поэтому
-/// цепляемся за устойчивые куски: `Downloading app <id>` / `AppID <id>`,
-/// процент или пары «скачано/всего».
-fn parse_download_line(line: &str) -> Option<Download> {
-    let app_id = extract_app_id(line)?;
-    let paused = line.contains("Paused") || line.contains("paused");
+const STATE_UPDATE_QUEUED: u64 = 8;
+const STATE_UPDATE_RUNNING: u64 = 256;
+const STATE_UPDATE_PAUSED: u64 = 512;
+const STATE_UPDATE_STARTED: u64 = 1024;
 
-    Some(Download {
-        app_id,
-        percent: extract_percent(line).or_else(|| percent_from_bytes(line)),
-        paused,
-    })
-}
+/// Значение ключа из формата Valve: `"name"\t\t"Dota 2"`.
+fn acf_value(text: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let rest = text.split(&needle).nth(1)?.trim_start();
+    let rest = rest.strip_prefix('"')?;
 
-fn extract_app_id(line: &str) -> Option<String> {
-    for marker in ["Downloading app ", "AppID "] {
-        if let Some(rest) = line.split(marker).nth(1) {
-            let digits: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
-            if !digits.is_empty() {
-                return Some(digits);
-            }
-        }
-    }
-    None
-}
-
-/// Ищет число перед последним знаком `%` в строке: в логе перед ним бывает
-/// служебный `[ 42%]`-префикс, а прогресс идёт дальше.
-fn extract_percent(line: &str) -> Option<f64> {
-    let percent_index = line.rfind('%')?;
-    let head = line[..percent_index].trim_end();
-    let number: String = head
-        .chars()
-        .rev()
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-
-    number.parse::<f64>().ok()
-}
-
-/// `"... 1234 bytes downloaded, 5678 bytes total"` → процент.
-fn percent_from_bytes(line: &str) -> Option<f64> {
-    let downloaded = number_before(line, "bytes downloaded")?;
-    let total = number_before(line, "bytes total")?;
-    (total > 0.0).then(|| (downloaded / total * 100.0).min(100.0))
-}
-
-fn number_before(line: &str, marker: &str) -> Option<f64> {
-    let head = line.split(marker).next()?.trim_end();
-    let number: String = head
-        .chars()
-        .rev()
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-
-    number.parse::<f64>().ok()
-}
-
-/// Имя игры из манифеста `steamapps/appmanifest_<id>.acf`.
-fn manifest_name(steam_root: &Path, app_id: &str) -> Option<String> {
-    let path = steam_root
-        .join("steamapps")
-        .join(format!("appmanifest_{app_id}.acf"));
-    let text = fs::read_to_string(path).ok()?;
-
-    let mut rest = text.split("\"name\"").nth(1)?;
-    rest = rest.trim_start().strip_prefix('"')?;
     rest.split('"').next().map(str::to_string)
 }
 
-fn last_download(steam_root: &Path) -> Option<Download> {
-    let log = read_tail(&steam_root.join("logs/content_log.txt"), 512 * 1024)?;
+fn acf_number(text: &str, key: &str) -> Option<u64> {
+    acf_value(text, key)?.parse().ok()
+}
+
+/// Все `steamapps` клиента: основная библиотека плюс подключённые в
+/// `libraryfolders.vdf` (игры часто стоят на другом диске).
+fn library_steamapps(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![root.join("steamapps")];
+
+    if let Ok(vdf) = fs::read_to_string(root.join("steamapps/libraryfolders.vdf")) {
+        for line in vdf.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("\"path\"") else {
+                continue;
+            };
+            let Some(rest) = rest.trim_start().strip_prefix('"') else {
+                continue;
+            };
+            let Some(path) = rest.split('"').next() else {
+                continue;
+            };
+
+            let candidate = Path::new(path).join("steamapps");
+            if candidate.is_dir() {
+                dirs.push(candidate);
+            }
+        }
+    }
+
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn manifests(root: &Path) -> Vec<Manifest> {
+    let mut items = Vec::new();
+
+    for dir in library_steamapps(root) {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.starts_with("appmanifest_") || !file_name.ends_with(".acf") {
+                continue;
+            }
+
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let (Some(total), Some(downloaded)) = (
+                acf_number(&text, "BytesToDownload"),
+                acf_number(&text, "BytesDownloaded"),
+            ) else {
+                continue;
+            };
+
+            let app_id = file_name
+                .trim_start_matches("appmanifest_")
+                .trim_end_matches(".acf")
+                .to_string();
+
+            items.push(Manifest {
+                name: acf_value(&text, "name").unwrap_or_else(|| format!("app {app_id}")),
+                state_flags: acf_number(&text, "StateFlags").unwrap_or_default(),
+                downloaded,
+                total,
+                modified: entry
+                    .metadata()
+                    .ok()
+                    .and_then(|meta| meta.modified().ok())
+                    .unwrap_or(UNIX_EPOCH),
+                app_id,
+            });
+        }
+    }
+
+    items
+}
+
+/// Игра, у которой скачано меньше, чем нужно. Идущая загрузка важнее
+/// приостановленной, свежий манифест — важнее старого.
+fn pending_download(items: &[Manifest]) -> Option<&Manifest> {
+    items
+        .iter()
+        .filter(|manifest| manifest.total > 0 && manifest.downloaded < manifest.total)
+        .max_by_key(|manifest| {
+            (
+                manifest.state_flags & STATE_UPDATE_RUNNING != 0,
+                manifest.modified,
+            )
+        })
+}
+
+/// Последняя скорость из `content_log.txt`: `Current download rate: 60.386 Mbps`.
+/// Steam пишет мегабиты, карточке нужны байты в секунду.
+fn last_download_rate(root: &Path) -> Option<f64> {
+    let log = read_tail(&root.join("logs/content_log.txt"), 256 * 1024)?;
 
     log.lines()
-        .filter_map(parse_download_line)
+        .filter_map(|line| {
+            let rest = line.split("Current download rate:").nth(1)?;
+            let mbps: f64 = rest.split_whitespace().next()?.parse().ok()?;
+
+            Some(mbps * 1_000_000.0 / 8.0)
+        })
         .next_back()
 }
 
-fn steam_status() -> SteamStatus {
+fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
+    let rate = rate.filter(|value| *value > 0.0)?;
+
+    Some((remaining as f64 / rate).ceil() as u64)
+}
+
+/// Скорость по приросту скачанных байтов между опросами. Манифест Steam
+/// обновляется чаще, чем строка `Current download rate` в логе, поэтому
+/// дельта точнее; рывки сглаживаем, а нулю не даём затереть живую оценку.
+fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64) -> Option<f64> {
+    let mut sample = None;
+
+    if let Some(previous) = cache.progress.take() {
+        let elapsed = previous.at.elapsed().as_secs_f64();
+
+        if previous.app_id == app_id {
+            if downloaded > previous.bytes && elapsed > 0.2 {
+                sample = Some((downloaded - previous.bytes) as f64 / elapsed);
+            }
+        } else {
+            cache.rate_ema = None;
+        }
+    }
+
+    cache.progress = Some(Progress {
+        app_id: app_id.to_string(),
+        bytes: downloaded,
+        at: Instant::now(),
+    });
+
+    if let Some(instant) = sample {
+        cache.rate_ema = Some(match cache.rate_ema {
+            Some(ema) => ema * 0.5 + instant * 0.5,
+            None => instant,
+        });
+    }
+
+    cache.rate_ema
+}
+
+fn steam_status(cache: &mut Cache) -> SteamStatus {
     let running = process_running(&["steam", "steamwebhelper"]);
 
     let Some(root) = steam_root() else {
@@ -566,7 +703,8 @@ fn steam_status() -> SteamStatus {
         };
     }
 
-    let Some(download) = last_download(&root) else {
+    let items = manifests(&root);
+    let Some(download) = pending_download(&items) else {
         return SteamStatus {
             installed: true,
             running: true,
@@ -575,16 +713,29 @@ fn steam_status() -> SteamStatus {
         };
     };
 
-    let game = manifest_name(&root, &download.app_id)
-        .unwrap_or_else(|| format!("app {}", download.app_id));
+    let state = if download.state_flags & STATE_UPDATE_RUNNING != 0 {
+        "загрузка"
+    } else if download.state_flags & STATE_UPDATE_QUEUED != 0 {
+        "в очереди"
+    } else if download.state_flags & (STATE_UPDATE_PAUSED | STATE_UPDATE_STARTED) != 0 {
+        "пауза"
+    } else {
+        "загрузка"
+    };
 
-    let state = if download.paused { "пауза" } else { "загрузка" };
+    let rate = measured_rate(cache, &download.app_id, download.downloaded)
+        .or_else(|| last_download_rate(&root));
+    let remaining = download.total.saturating_sub(download.downloaded);
 
     SteamStatus {
         installed: true,
         running: true,
-        game,
-        percent: download.percent,
+        game: download.name.clone(),
+        percent: Some(download.downloaded as f64 / download.total as f64 * 100.0),
+        downloaded: Some(download.downloaded),
+        total: Some(download.total),
+        rate: rate.map(|value| value.round() as u64),
+        eta: eta_seconds(remaining, rate),
         state: state.into(),
     }
 }
@@ -766,25 +917,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_download_lines() {
-        let download =
-            parse_download_line("[ 42%] Downloading app 22380 : 42.5% of 1.2 GB").unwrap();
-        assert_eq!(download.app_id, "22380");
-        assert_eq!(download.percent, Some(42.5));
+    fn reads_app_manifest() {
+        let text = "\"AppState\"\n{\n\t\"appid\"\t\t\"440\"\n\t\"name\"\t\t\"Team Fortress 2\"\n\t\"StateFlags\"\t\t\"1026\"\n\t\"BytesToDownload\"\t\t\"17438430624\"\n\t\"BytesDownloaded\"\t\t\"5610909440\"\n}";
 
-        let download = parse_download_line("AppID 570 : Downloading, 500 bytes downloaded, 1000 bytes total").unwrap();
-        assert_eq!(download.app_id, "570");
-        assert_eq!(download.percent, Some(50.0));
-
-        assert!(parse_download_line("no download here").is_none());
+        assert_eq!(acf_value(text, "name").as_deref(), Some("Team Fortress 2"));
+        assert_eq!(acf_number(text, "StateFlags"), Some(1026));
+        assert_eq!(acf_number(text, "BytesDownloaded"), Some(5610909440));
+        assert_eq!(acf_value(text, "missing"), None);
     }
 
     #[test]
-    fn parses_manifest_name() {
-        let text = "\"AppState\"\n{\n\t\"appid\"\t\t\"570\"\n\t\"name\"\t\t\"Dota 2\"\n}";
-        let mut rest = text.split("\"name\"").nth(1).unwrap();
-        rest = rest.trim_start().strip_prefix('"').unwrap();
-        assert_eq!(rest.split('"').next().unwrap(), "Dota 2");
+    fn estimates_eta_from_rate() {
+        assert_eq!(eta_seconds(4000, Some(1000.0)), Some(4));
+        assert_eq!(eta_seconds(4000, Some(0.0)), None);
+        assert_eq!(eta_seconds(4000, None), None);
     }
 
     #[test]
