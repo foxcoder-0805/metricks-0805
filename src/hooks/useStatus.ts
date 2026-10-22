@@ -3,7 +3,7 @@ import { fetchStatus, hasTauri } from '../api/tauri'
 import type { StatusSnapshot } from '../types'
 
 /** Как часто перечитываем состояние машины. */
-const POLL_INTERVAL = 5000
+const POLL_INTERVAL = 1000
 
 export interface StatusState {
   snapshot: StatusSnapshot | null
@@ -25,8 +25,13 @@ export function useStatus(): StatusState {
     }
 
     let alive = true
+    let inFlight = false
 
     const poll = async () => {
+      // Секундный опрос не должен наслаиваться, если сборка снимка затянулась.
+      if (!alive || inFlight) return
+      inFlight = true
+
       try {
         const next = await fetchStatus()
         if (!alive) return
@@ -35,6 +40,8 @@ export function useStatus(): StatusState {
       } catch (cause) {
         if (!alive) return
         setError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        inFlight = false
       }
     }
 
