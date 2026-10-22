@@ -1,4 +1,4 @@
-import type { StatusCard as StatusCardData } from '../api/types'
+import type { StatusCard as StatusCardData } from '../types'
 import { CloseIcon } from './Icons'
 
 interface StatusCardProps {

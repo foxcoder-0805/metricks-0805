@@ -1,69 +1,54 @@
-import { useState } from 'react'
-import { getApiBase, setApiBase } from './api/config'
+import { useRef, useState } from 'react'
+import { AddCardDialog } from './components/AddCardDialog'
+import { AddCardTile } from './components/AddCardTile'
 import { Header } from './components/Header'
-import { SessionCard } from './components/SessionCard'
 import { StatusCard } from './components/StatusCard'
-import { useDashboard } from './hooks/useDashboard'
-import { formatClock } from './lib/format'
+import { dashboardStatus, dashboardUser, initialCards } from './data/dashboard'
+import type { StatusCard as StatusCardData } from './types'
 
 export default function App() {
-  const [apiBase, setApiBaseState] = useState(() => getApiBase())
   const [dismissed, setDismissed] = useState<string[]>([])
-  const { summary, error, loading, updatedAt, refresh } = useDashboard(apiBase)
+  const [added, setAdded] = useState<StatusCardData[]>([])
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const counter = useRef(0)
 
-  const cards = (summary?.cards ?? []).filter((card) => !dismissed.includes(card.id))
-
-  const handleApiBaseChange = (base: string) => {
-    setApiBase(base)
-    setApiBaseState(getApiBase())
-  }
+  const cards = [...initialCards.filter((card) => !dismissed.includes(card.id)), ...added]
 
   const dismissCard = (id: string) => {
-    setDismissed((list) => (list.includes(id) ? list : [...list, id]))
+    setAdded((list) => list.filter((card) => card.id !== id))
+
+    // встроенные карточки помним, чтобы «Вернуть карточки» их восстановило
+    if (initialCards.some((card) => card.id === id)) {
+      setDismissed((list) => (list.includes(id) ? list : [...list, id]))
+    }
+  }
+
+  const addCard = (card: StatusCardData) => {
+    counter.current += 1
+    setAdded((list) => [...list, { ...card, id: `custom-${counter.current}` }])
   }
 
   return (
     <div className="app">
       <div className="shell">
-        <Header
-          user={summary?.user ?? null}
-          status={summary?.status ?? null}
-          onRefresh={refresh}
-          loading={loading}
-          connected={!error}
-          apiBase={apiBase}
-          onApiBaseChange={handleApiBaseChange}
-        />
+        <Header user={dashboardUser} status={dashboardStatus} />
 
-        {error && !summary ? (
-          <div className="overlay">
-            <div className="overlay__title">Нет связи с источником данных</div>
-            <p className="overlay__hint">
-              {error}
-              <br />
-              Проверьте адрес <code>{apiBase}</code> в настройках источника данных.
-            </p>
-            <button type="button" className="btn" onClick={refresh}>
-              Повторить
-            </button>
-          </div>
-        ) : (
-          <main className="grid">
-            {cards.map((card) => (
-              <StatusCard key={card.id} card={card} onDismiss={dismissCard} />
-            ))}
+        <main className="grid">
+          {cards.map((card) => (
+            <StatusCard key={card.id} card={card} onDismiss={dismissCard} />
+          ))}
 
-            <SessionCard session={summary?.session ?? null} />
-          </main>
-        )}
+          <AddCardTile onClick={() => setDialogOpen(true)} />
+        </main>
 
         <footer className="statusbar">
           <span className="statusbar__item">
             <span className="chip__dot" />
-            {updatedAt ? `Обновлено в ${formatClock(updatedAt)}` : 'Ожидание данных'}
+            Данные статичны
           </span>
-          <span className="statusbar__item">API: {apiBase}</span>
-          {error ? <span className="statusbar__item">⚠ {error}</span> : null}
+
+          <span className="statusbar__item">Карточек: {cards.length}</span>
+
           {dismissed.length > 0 ? (
             <button type="button" className="statusbar__link" onClick={() => setDismissed([])}>
               Вернуть карточки
@@ -71,6 +56,10 @@ export default function App() {
           ) : null}
         </footer>
       </div>
+
+      {dialogOpen ? (
+        <AddCardDialog onClose={() => setDialogOpen(false)} onAdd={addCard} />
+      ) : null}
     </div>
   )
 }
