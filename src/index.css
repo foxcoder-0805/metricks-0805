@@ -268,20 +268,11 @@ button {
   gap: 20px;
 }
 
-.col-3 {
-  grid-column: span 3;
-}
 .col-4 {
   grid-column: span 4;
 }
-.col-7 {
-  grid-column: span 7;
-}
 .col-8 {
   grid-column: span 8;
-}
-.col-12 {
-  grid-column: span 12;
 }
 
 /* ─────────────── карточка ─────────────── */
@@ -308,32 +299,6 @@ button {
   border-radius: inherit;
   pointer-events: none;
   box-shadow: var(--shadow-inset);
-}
-
-.card__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.card__title {
-  font-size: 19px;
-  font-weight: 620;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-
-.card__sub {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
-.card__body {
-  flex: 1;
-  min-height: 0;
 }
 
 /* ─────────────── карточка источника ───────────────
@@ -621,85 +586,6 @@ button {
   font-size: 12px;
 }
 
-/* ─────────────── гейдж ─────────────── */
-
-.gauge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.gauge__value {
-  font-size: 26px;
-  font-weight: 620;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
-.gauge__label {
-  color: var(--muted);
-  font-size: 12.5px;
-  text-align: center;
-}
-
-.gauge__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 18px;
-}
-
-/* ─────────────── таблица ─────────────── */
-
-.table-wrap {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line-soft);
-  overflow: hidden;
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.table th {
-  padding: 10px 14px;
-  text-align: left;
-  color: var(--muted);
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  background: rgba(124, 58, 237, 0.09);
-  border-bottom: 1px solid var(--line);
-}
-
-.table td {
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.table tbody tr:hover td {
-  background: rgba(168, 85, 247, 0.05);
-}
-
-.table td.num {
-  font-family: var(--font-mono);
-  text-align: right;
-}
-
-.table td:first-child {
-  color: var(--text);
-  font-weight: 550;
-}
-
 /* ─────────────── подвал ─────────────── */
 
 .statusbar {
@@ -786,17 +672,6 @@ button {
   filter: brightness(1.1);
 }
 
-.btn--ghost {
-  background: var(--surface-3);
-  border-color: var(--line);
-  color: var(--text-dim);
-}
-
-.btn--ghost:hover {
-  border-color: rgba(168, 85, 247, 0.45);
-  color: var(--purple-200);
-}
-
 /* ─────────────── состояния ─────────────── */
 
 .overlay {
@@ -829,26 +704,9 @@ button {
   font-size: 12px;
 }
 
-.skeleton {
-  border-radius: var(--r-md);
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease infinite;
-}
-
-@keyframes shimmer {
-  to {
-    background-position: -135% 0;
-  }
-}
-
 /* ─────────────── адаптив ─────────────── */
 
 @media (max-width: 1240px) {
-  .col-3 {
-    grid-column: span 6;
-  }
-  .col-7,
   .col-8 {
     grid-column: span 12;
   }
@@ -861,9 +719,7 @@ button {
   .app {
     padding: 18px 16px 26px;
   }
-  .col-3,
   .col-4,
-  .col-7,
   .col-8 {
     grid-column: span 12;
   }

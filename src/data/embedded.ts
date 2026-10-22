@@ -1,4 +1,4 @@
-import type { Bars, Range, Series, Summary } from '../api/types'
+import type { Range, Series, Summary } from '../api/types'
 
 const now = new Date()
 const iso = now.toISOString()
@@ -57,80 +57,6 @@ const summaryBase: Summary = {
       spark: wave(24, 28, 10, 4),
     },
   ],
-  kpis: [
-    {
-      id: 'requests',
-      label: 'Запросы',
-      value: 124680,
-      unit: 'req/s',
-      delta: 6.4,
-      format: 'number',
-      icon: 'activity',
-      spark: wave(24, 95, 14, 12),
-      invertDelta: false,
-    },
-    {
-      id: 'errors',
-      label: 'Доля ошибок',
-      value: 0.72,
-      unit: '%',
-      delta: -12.6,
-      format: 'percent',
-      icon: 'alert',
-      spark: wave(24, 1.4, 0.4, -0.2),
-      invertDelta: true,
-    },
-    {
-      id: 'latency',
-      label: 'Задержка p95',
-      value: 78,
-      unit: 'мс',
-      delta: -6.8,
-      format: 'duration',
-      icon: 'clock',
-      spark: wave(24, 92, 16, -10),
-      invertDelta: true,
-    },
-    {
-      id: 'users',
-      label: 'Активные сессии',
-      value: 3610,
-      unit: 'чел.',
-      delta: 6.2,
-      format: 'number',
-      icon: 'users',
-      spark: wave(24, 118, 22, 14),
-      invertDelta: false,
-    },
-  ],
-  gauges: [
-    { id: 'cpu', label: 'Загрузка CPU', value: 28, max: 100, unit: '%', caption: 'кластер api-01…04' },
-    { id: 'memory', label: 'Память', value: 47, max: 100, unit: '%', caption: 'node × 8' },
-    { id: 'disk', label: 'Диск', value: 54, max: 100, unit: '%', caption: 'ssd nvme' },
-  ],
-  donuts: [
-    {
-      id: 'sources',
-      label: 'Источники трафика',
-      items: [
-        { label: 'Telegram', value: 48 },
-        { label: 'OpenCode', value: 32 },
-        { label: 'Steam', value: 20 },
-      ],
-    },
-  ],
-  table: {
-    id: 'regions',
-    columns: ['Регион', 'Запросы', 'Ошибки', 'p95'],
-    rows: [
-      ['eu-central-1', 39884, 40, 73],
-      ['eu-north-1', 31081, 26, 100],
-      ['us-east-1', 27034, 11, 108],
-      ['us-west-2', 19786, 22, 100],
-      ['ap-south-1', 12680, 38, 154],
-      ['sa-east-1', 8749, 35, 174],
-    ],
-  },
 }
 
 function labelsFor(range: Range, len: number): string[] {
@@ -160,17 +86,6 @@ function buildSeries(range: Range): Series {
   }
 }
 
-function buildBars(range: Range): Bars {
-  const len = rangeLen(range)
-  return {
-    labels: labelsFor(range, len),
-    series: [
-      { id: 'reads', label: 'Чтения', values: wave(len, 58, 18, 6) },
-      { id: 'writes', label: 'Записи', values: wave(len, 32, 12, 4) },
-    ],
-  }
-}
-
 export const embedded = {
   health() {
     return { ok: true }
@@ -183,8 +98,5 @@ export const embedded = {
   },
   series(range: Range): Series {
     return buildSeries(range)
-  },
-  bars(range: Range): Bars {
-    return buildBars(range)
   },
 }

@@ -1,49 +1,4 @@
-/** Контракт данных дашборда. Один и тот же для реального API и для mock-сервера. */
-
-export type KpiFormat = 'number' | 'percent' | 'bytes' | 'duration'
-
-export interface Kpi {
-  id: string
-  label: string
-  value: number
-  unit?: string
-  /** Изменение в процентах за выбранный период. */
-  delta?: number
-  /** Формат значения: number | percent | bytes | duration. */
-  format?: KpiFormat
-  /** Иконка из набора components/Icons.tsx. */
-  icon?: string
-  /** Ряд для спарклайна. */
-  spark?: number[]
-  /** true — рост значения считается ухудшением (ошибки, latency). */
-  invertDelta?: boolean
-}
-
-export interface Gauge {
-  id: string
-  label: string
-  value: number
-  max: number
-  unit?: string
-  caption?: string
-}
-
-export interface DonutItem {
-  label: string
-  value: number
-}
-
-export interface Donut {
-  id: string
-  label: string
-  items: DonutItem[]
-}
-
-export interface TableData {
-  id: string
-  columns: string[]
-  rows: Array<Array<string | number>>
-}
+/** Контракт данных дашборда. Один и тот же для реального API и для встроенных данных. */
 
 export type HealthState = 'ok' | 'warn' | 'error'
 
@@ -95,10 +50,6 @@ export interface Summary {
   }
   overview: Overview
   sources: SourceCard[]
-  kpis: Kpi[]
-  gauges: Gauge[]
-  donuts: Donut[]
-  table: TableData
 }
 
 export interface Series {
@@ -107,15 +58,6 @@ export interface Series {
     id: string
     label: string
     points: number[]
-  }>
-}
-
-export interface Bars {
-  labels: string[]
-  series: Array<{
-    id: string
-    label: string
-    values: number[]
   }>
 }
 
