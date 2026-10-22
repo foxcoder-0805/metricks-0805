@@ -1,12 +1,16 @@
+pub mod status;
+
 /// Точка входа приложения.
 ///
 /// Плагины и команды здесь добавляются по мере необходимости: сейчас
-/// оболочке не нужно ничего, кроме показа окна с веб-интерфейсом.
+/// оболочке нужно показать окно с веб-интерфейсом и отдать ему
+/// реальное состояние машины.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     configure_webkit();
 
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![status::get_status])
         .run(tauri::generate_context!())
         .expect("не удалось запустить приложение Metricks");
 }
