@@ -34,7 +34,17 @@ const GIT_TTL: Duration = Duration::from_secs(5);
 pub struct OpenCodeStatus {
     /// База найдена и в ней есть хотя бы одна сессия.
     pub available: bool,
-    /// Заголовок последней сессии — о чём идёт работа.
+    /// Открытые сессии: свежие сверху.
+    pub sessions: Vec<OpenCodeSession>,
+}
+
+/// Одна открытая сессия OpenCode.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeSession {
+    /// Идентификатор сессии — по нему фронтенд различает карточки.
+    pub id: String,
+    /// Заголовок сессии — о чём идёт работа.
     pub task: String,
     /// Последний запрос пользователя.
     pub request: String,
@@ -46,7 +56,9 @@ pub struct OpenCodeStatus {
     pub updated_at: Option<i64>,
     /// Сколько файлов изменено в сессии.
     pub files_changed: Option<i64>,
-    /// OpenCode закончил работу и ждёт следующего запроса.
+    /// Что OpenCode делает прямо сейчас: «думает», «пишет в файл «…»».
+    pub activity: String,
+    /// Сессия закончила работу и ждёт следующего запроса.
     pub idle: bool,
 }
 
@@ -334,58 +346,210 @@ fn sqlite_json(db: &Path, query: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
-const SESSION_QUERY: &str = "select title, directory, model, agent, time_updated, \
+const SESSION_QUERY: &str = "select id, title, directory, model, time_updated, \
      time_idle, idle_outcome, summary_files from session_v2 \
-     order by time_updated desc limit 1";
+     order by time_updated desc limit 10";
 
-const REQUEST_QUERY: &str = "select data from session_message \
-     where type = 'user' order by seq desc limit 1";
+/// Сколько сессий считаются открытыми: те, что трогали за последние сутки.
+/// Старые сессии в базе остаются навсегда, но карточек им не полагается.
+const SESSION_OPEN_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn opencode_status() -> OpenCodeStatus {
     let Some(db) = opencode_db_path() else {
         return OpenCodeStatus::default();
     };
 
-    let session = sqlite_json(&db, SESSION_QUERY)
-        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned());
-
-    let Some(session) = session else {
+    let Some(rows) = sqlite_json(&db, SESSION_QUERY)
+        .and_then(|value| value.as_array().cloned())
+    else {
         return OpenCodeStatus::default();
     };
 
+    let now = now_ms();
+    let sessions: Vec<OpenCodeSession> = rows
+        .iter()
+        .map(|row| session_status(&db, row, now))
+        // Открытые сессии: те, что трогали за последние сутки. Остальные
+        // остаются в базе навсегда, но карточек им не полагается.
+        .filter(|session| {
+            session
+                .updated_at
+                .is_some_and(|updated| now - updated < SESSION_OPEN_MS)
+        })
+        .collect();
+
+    OpenCodeStatus {
+        available: !sessions.is_empty(),
+        sessions,
+    }
+}
+
+/// Собирает карточку одной сессии: заголовок, запрос, активность.
+fn session_status(db: &Path, row: &serde_json::Value, now: i64) -> OpenCodeSession {
     let text = |key: &str| {
-        session
-            .get(key)
+        row.get(key)
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string()
     };
 
-    let updated_at = session.get("time_updated").and_then(|value| value.as_i64());
-    let files_changed = session.get("summary_files").and_then(|value| value.as_i64());
-    let idle = session
+    let id = text("id");
+    let updated_at = row.get("time_updated").and_then(|value| value.as_i64());
+    let files_changed = row.get("summary_files").and_then(|value| value.as_i64());
+    // Сессию считаем idle, только если она давно не обновлялась: свежая
+    // отметка означает, что OpenCode прямо сейчас работает.
+    let idle = row
         .get("idle_outcome")
         .map(|value| !value.is_null())
         .unwrap_or(false)
-        && updated_at.is_some_and(|updated| now_ms() - updated > IDLE_AFTER_MS);
+        && updated_at.is_some_and(|updated| now - updated > IDLE_AFTER_MS);
 
-    let request = sqlite_json(&db, REQUEST_QUERY)
-        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned())
-        .and_then(|row| row.get("data").and_then(|value| value.as_str()).map(str::to_string))
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+    let request = last_message(db, &id, "user")
         .and_then(|data| data.get("text").and_then(|value| value.as_str()).map(str::to_string))
         .unwrap_or_default();
 
-    OpenCodeStatus {
-        available: true,
+    let activity = if idle {
+        String::new()
+    } else {
+        last_message(db, &id, "assistant")
+            .map(|data| describe_activity(&data, now))
+            .unwrap_or_default()
+    };
+
+    OpenCodeSession {
+        id,
         task: text("title"),
         request,
         model: model_name(&text("model")),
         directory: text("directory"),
         updated_at,
         files_changed,
+        activity,
         idle,
     }
+}
+
+/// Последнее сообщение сессии нужного типа: `data` уже разобранный JSON.
+fn last_message(db: &Path, session_id: &str, kind: &str) -> Option<serde_json::Value> {
+    let query = format!(
+        "select data from session_message where session_id = '{session_id}' \
+         and type = '{kind}' order by seq desc limit 1"
+    );
+
+    sqlite_json(db, &query)
+        .and_then(|rows| rows.as_array().and_then(|rows| rows.first()).cloned())
+        .and_then(|row| row.get("data").and_then(|value| value.as_str()).map(str::to_string))
+        .and_then(|data| serde_json::from_str(&data).ok())
+}
+
+/// Что сессия делает прямо сейчас — по частям последнего ответа ассистента.
+///
+/// Активность живёт, пока сообщение свежее: если ассистент ответил давно,
+/// честнее показать пустую строку, чем подвисшее «думает».
+fn describe_activity(data: &serde_json::Value, now: i64) -> String {
+    let created = data
+        .get("time")
+        .and_then(|time| time.get("created"))
+        .and_then(|value| value.as_i64());
+
+    // Сообщение старше `IDLE_AFTER_MS` — работа давно закончилась.
+    if created.is_some_and(|at| now - at > IDLE_AFTER_MS) {
+        return String::new();
+    }
+
+    let Some(parts) = data.get("content").and_then(|value| value.as_array()) else {
+        return String::new();
+    };
+
+    // Идём с конца: важен последний шаг, а не начало ответа.
+    for part in parts.iter().rev() {
+        match part.get("type").and_then(|value| value.as_str()) {
+            Some("tool") => {
+                let running = part
+                    .get("state")
+                    .and_then(|state| state.get("status"))
+                    .and_then(|value| value.as_str())
+                    == Some("running");
+
+                if running {
+                    return tool_activity(part);
+                }
+            }
+            Some("reasoning") => return String::from("думает"),
+            Some("text") => return String::from("пишет ответ"),
+            _ => {}
+        }
+    }
+
+    String::new()
+}
+
+/// Инструмент под рукой: что именно OpenCode делает прямо сейчас.
+fn tool_activity(part: &serde_json::Value) -> String {
+    let name = part.get("name").and_then(|value| value.as_str()).unwrap_or("");
+    let input = part.get("state").and_then(|state| state.get("input"));
+
+    let field = |key: &str| {
+        input
+            .and_then(|input| input.get(key))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+    };
+
+    match name {
+        "edit" | "write" => match file_title(&field("path")) {
+            Some(title) => format!("пишет в файл «{title}»"),
+            None => String::from("правит файлы"),
+        },
+        "read" => match file_title(&field("path")) {
+            Some(title) => format!("читает «{title}»"),
+            None => String::from("читает файлы"),
+        },
+        "shell" => {
+            // Показываем саму команду: по ней видно, чем занят агент.
+            let command = field("command");
+            let command = command.split(['\n', '|', ';']).next().unwrap_or("").trim();
+
+            if command.is_empty() {
+                String::from("запускает команду")
+            } else {
+                format!("запускает «{}»", truncate(command, 60))
+            }
+        }
+        "grep" => format!("ищет «{}»", truncate(&field("pattern"), 40)),
+        "glob" => format!("ищет файлы «{}»", truncate(&field("pattern"), 40)),
+        "webfetch" => format!("открывает {}", truncate(&field("url"), 50)),
+        "question" => String::from("спрашивает"),
+        "task" => String::from("запускает подзадачу"),
+        "" => String::from("работает"),
+        other => format!("использует {other}"),
+    }
+}
+
+/// Имя файла из пути: полный путь в карточку не влезает.
+fn file_title(path: &str) -> Option<String> {
+    let path = path.trim();
+
+    if path.is_empty() {
+        return None;
+    }
+
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .or_else(|| Some(path.to_string()))
+}
+
+fn truncate(text: &str, limit: usize) -> String {
+    let text = text.trim();
+
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+
+    let cut: String = text.chars().take(limit.saturating_sub(1)).collect();
+    format!("{cut}…")
 }
 
 /// В базе модель лежит JSON-строкой вида `{"id":"…","providerID":"…"}`.
@@ -969,11 +1133,13 @@ fn focus_status() -> FocusStatus {
 // ───────────────────────────── git ─────────────────────────────
 
 /// Git показываем для проекта, в котором идёт сессия OpenCode:
-/// это и есть «текущая работа» на машине.
+/// это и есть «текущая работа» на машине. Сессии идут свежие сверху.
 fn git_workdir(opencode: &OpenCodeStatus) -> PathBuf {
-    let session_dir = PathBuf::from(&opencode.directory);
-    if !opencode.directory.is_empty() && session_dir.is_dir() {
-        return session_dir;
+    if let Some(session) = opencode.sessions.first() {
+        let session_dir = PathBuf::from(&session.directory);
+        if !session.directory.is_empty() && session_dir.is_dir() {
+            return session_dir;
+        }
     }
 
     home_dir().unwrap_or_else(|| PathBuf::from("/"))
@@ -1145,6 +1311,75 @@ mod tests {
         let month = month_shift + if month_shift < 10 { 3 } else { -9 };
 
         (year + i64::from(month <= 2), month, day)
+    }
+
+    /// Сообщение ассистента в том же виде, как его пишет OpenCode.
+    fn assistant_message(parts: &str, created: i64) -> serde_json::Value {
+        serde_json::from_str(&format!(
+            "{{\"time\":{{\"created\":{created}}},\"content\":[{parts}]}}"
+        ))
+        .expect("разбор сообщения")
+    }
+
+    #[test]
+    fn reads_running_tool_as_activity() {
+        let now = 1_000_000;
+        let edit = assistant_message(
+            r#"{"type":"reasoning"},{"type":"tool","name":"edit","state":{"status":"running","input":{"path":"/home/fox/prog/metricks/src-tauri/src/status.rs"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&edit, now), "пишет в файл «status.rs»");
+    }
+
+    #[test]
+    fn ignores_finished_tools() {
+        let now = 1_000_000;
+        // Инструмент уже отработал, значит смотрим на предшествующее размышление.
+        let finished = assistant_message(
+            r#"{"type":"reasoning"},{"type":"tool","name":"shell","state":{"status":"completed","input":{"command":"ls"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&finished, now), "думает");
+    }
+
+    #[test]
+    fn names_the_shell_command() {
+        let now = 1_000_000;
+        let shell = assistant_message(
+            r#"{"type":"tool","name":"shell","state":{"status":"running","input":{"command":"git status\ncargo test"}}}"#,
+            now,
+        );
+
+        assert_eq!(describe_activity(&shell, now), "запускает «git status»");
+    }
+
+    #[test]
+    fn stale_message_has_no_activity() {
+        let now = 1_000_000;
+        let old = assistant_message(r#"{"type":"reasoning"}"#, now - IDLE_AFTER_MS - 1);
+
+        assert_eq!(describe_activity(&old, now), "");
+    }
+
+    #[test]
+    fn plain_answer_reads_as_writing() {
+        let now = 1_000_000;
+        let answer = assistant_message(r#"{"type":"text","text":"готово"}"#, now);
+
+        assert_eq!(describe_activity(&answer, now), "пишет ответ");
+    }
+
+    #[test]
+    fn long_paths_keep_only_the_file_name() {
+        assert_eq!(
+            file_title("/home/fox/prog/metricks/src/index.css").as_deref(),
+            Some("index.css")
+        );
+        assert_eq!(file_title("  ").as_deref(), None);
+        assert_eq!(truncate("абвгде", 4), "абв…");
+        assert_eq!(truncate("абв", 4), "абв");
     }
 
     #[test]

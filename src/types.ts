@@ -51,12 +51,21 @@ export interface AppOption {
 /** Последняя сессия OpenCode. */
 export interface OpenCodeStatus {
   available: boolean
+  /** Открытые сессии: свежие сверху. */
+  sessions: OpenCodeSession[]
+}
+
+/** Одна открытая сессия OpenCode. */
+export interface OpenCodeSession {
+  id: string
   task: string
   request: string
   model: string
   directory: string
   updatedAt: number | null
   filesChanged: number | null
+  /** Что OpenCode делает прямо сейчас; пусто, если ждёт запроса. */
+  activity: string
   idle: boolean
 }
 
