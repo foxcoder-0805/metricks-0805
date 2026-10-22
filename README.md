@@ -2,7 +2,7 @@
 
 Desktop status dashboard built with [Tauri v2](https://tauri.app), React 19, TypeScript and Vite.
 
-Dark UI with purple accents and rounded cards. The board shows three live status cards — what OpenCode is doing right now, what music is playing and how far a Steam download has gone — plus a large card with the details of the current OpenCode session.
+Dark UI with purple accents and rounded cards. The board shows three status cards — what OpenCode is doing right now, what music is playing and how far a Steam download has gone — plus a tile that adds your own cards on top of them.
 
 ## Requirements
 
@@ -42,45 +42,20 @@ npm run dev
 
 ## Data
 
-The dashboard works out of the box: demo data is embedded into the bundle (`src/data/embedded.ts`), so no backend is required. It contains three status cards (OpenCode, music, Steam) and the current OpenCode session.
+The dashboard works fully offline: there is no backend and no polling. All data is static and ships with the bundle.
 
-To read from a real API instead, enable the remote mode at build time:
+- `src/data/dashboard.ts` — the user shown in the header and the initial status cards.
+- `src/data/apps.ts` — the catalog of applications and the metrics that can be tracked for each of them.
 
-```bash
-VITE_USE_REMOTE=1 npm run build
-```
-
-The API base URL is resolved in the following order:
-
-1. Value set via the settings button in the header (saved to `localStorage`)
-2. `VITE_API_BASE` environment variable
-3. `http://127.0.0.1:8787` (default)
-
-Data is polled every 15 seconds. If a request fails, the last successful data remains on screen and an error state is shown in the status bar.
-
-## API contract
-
-All endpoints return JSON.
-
-### `GET /api/health`
-
-```json
-{ "ok": true }
-```
-
-### `GET /api/summary`
-
-Returns the user info, the status, the status cards and the OpenCode session. See `src/api/types.ts` for the full schema.
+Cards added from the catalog live in memory for the current session only.
 
 ## Project structure
 
 ```text
 src/            Frontend (React + TypeScript)
-  api/          API types, client and config
   components/   UI components
-  data/         Embedded dashboard data
-  hooks/        Data fetching hooks
-  lib/          Formatting and utilities
+  data/         Static dashboard data and the application catalog
+  types.ts      Shared types
 src-tauri/      Tauri v2 Rust wrapper
 ```
 
@@ -108,4 +83,4 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 
 - Top row: three status cards. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
-- Bottom row: one large card with the details of the current OpenCode session — the task title, its description, a progress bar and the list of the latest steps.
+- Second row: a `+` tile in place of the fourth card. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric.
