@@ -17,7 +17,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -189,6 +189,9 @@ struct Cache {
     progress: Option<Progress>,
     /// Сглаженная скорость загрузки в байтах в секунду.
     rate_ema: Option<f64>,
+    /// Когда байты в последний раз реально выросли: по нему понимаем,
+    /// что старую скорость пора забыть.
+    sample_at: Option<Instant>,
 }
 
 /// Замер прогресса загрузки: по приросту байтов считаем живую скорость,
@@ -222,6 +225,39 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or_default()
+}
+
+/// Смещение местной зоны от UTC в миллисекундах.
+///
+/// Логи Steam пишут время без зоны, но по местным часам машины. Без поправки
+/// строка «свежая» выглядела бы на три часа старше — и загрузка навсегда
+/// оставалась бы паузой.
+fn local_offset_ms() -> i64 {
+    static OFFSET: OnceLock<i64> = OnceLock::new();
+
+    *OFFSET.get_or_init(|| {
+        let Some(raw) = run("date", &["+%z"]) else {
+            return 0;
+        };
+
+        let raw = raw.trim();
+        let sign = match raw.as_bytes().first() {
+            Some(b'-') => -1,
+            _ => 1,
+        };
+        let digits = raw.trim_start_matches(['+', '-']);
+
+        // Формат `+HHMM`: часы и минуты смещения.
+        let (hours, minutes) = match digits.len() {
+            4 => (
+                digits[..2].parse::<i64>().unwrap_or(0),
+                digits[2..].parse::<i64>().unwrap_or(0),
+            ),
+            _ => (0, 0),
+        };
+
+        sign * (hours * 3_600 + minutes * 60) * 1_000
+    })
 }
 
 /// Запускает внешнюю команду и возвращает stdout. Ошибки не пробрасываются:
@@ -519,7 +555,11 @@ struct Manifest {
 const STATE_UPDATE_QUEUED: u64 = 8;
 const STATE_UPDATE_RUNNING: u64 = 256;
 const STATE_UPDATE_PAUSED: u64 = 512;
-const STATE_UPDATE_STARTED: u64 = 1024;
+
+/// Строка скорости моложе этого — загрузка идёт (Steam шлёт их раз в минуту).
+const DOWNLOAD_FRESH: Duration = Duration::from_secs(120);
+/// Байты, не растующие дольше этого, не считаем живой скоростью.
+const DOWNLOAD_STALE: Duration = Duration::from_secs(20);
 
 /// Значение ключа из формата Valve: `"name"\t\t"Dota 2"`.
 fn acf_value(text: &str, key: &str) -> Option<String> {
@@ -627,19 +667,76 @@ fn pending_download(items: &[Manifest]) -> Option<&Manifest> {
         })
 }
 
-/// Последняя скорость из `content_log.txt`: `Current download rate: 60.386 Mbps`.
-/// Steam пишет мегабиты, карточке нужны байты в секунду.
-fn last_download_rate(root: &Path) -> Option<f64> {
+/// Последняя скорость из `content_log.txt`: `Current download rate: 60.386 Mbps`,
+/// вместе с её возрастом. Steam шлёт эти строки примерно раз в минуту и только
+/// пока действительно качает: после остановки они прекращаются. Свежая строка —
+/// самый честный признак идущей загрузки, ведь `StateFlags` бывает 1026 и без
+/// флага Running (проверено на живом клиенте).
+struct DownloadRate {
+    bytes_per_second: f64,
+    age: Duration,
+}
+
+fn last_download_rate(root: &Path) -> Option<DownloadRate> {
     let log = read_tail(&root.join("logs/content_log.txt"), 256 * 1024)?;
+    let now = now_ms();
 
     log.lines()
         .filter_map(|line| {
             let rest = line.split("Current download rate:").nth(1)?;
             let mbps: f64 = rest.split_whitespace().next()?.parse().ok()?;
 
-            Some(mbps * 1_000_000.0 / 8.0)
+            // Строка начинается с `[2026-10-23 00:59:24]` — возраст берём от него.
+            let age = log_timestamp_ms(line)
+                .map(|at| Duration::from_millis((now - at).max(0) as u64))
+                .unwrap_or_default();
+
+            Some(DownloadRate {
+                bytes_per_second: mbps * 1_000_000.0 / 8.0,
+                age,
+            })
         })
         .next_back()
+}
+
+/// Отметка времени из начала строки лога: `[YYYY-MM-DD HH:MM:SS]`.
+/// Время в логе местное, поэтому сразу приводим его к UTC — так его можно
+/// сравнивать с `now_ms()`.
+fn log_timestamp_ms(line: &str) -> Option<i64> {
+    if !line.starts_with('[') {
+        return None;
+    }
+
+    let stamp = line.get(1..20)?;
+    let (date, time) = stamp.split_once(' ')?;
+    let mut parts = date.split('-').map(str::parse::<i32>);
+    let (year, month, day) = (
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    );
+    let mut clock = time.split(':').map(str::parse::<i64>);
+    let (hour, minute, second) = (
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+        clock.next()?.ok()?,
+    );
+
+    let days = days_since_epoch(year, month, day);
+    Some((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000 - local_offset_ms())
+}
+
+/// Дней от 1970-01-01 до даты — нужен только для сравнения строк лога с «сейчас».
+fn days_since_epoch(year: i32, month: i32, day: i32) -> i64 {
+    // Перевод даты в юлианский день — стандартная формула без внешних крейтов.
+    let year = year - i32::from(month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_shift = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_shift + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+
+    era as i64 * 146_097 + day_of_era as i64 - 719_468
 }
 
 fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
@@ -649,20 +746,30 @@ fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
 }
 
 /// Скорость по приросту скачанных байтов между опросами. Манифест Steam
-/// обновляется чаще, чем строка `Current download rate` в логе, поэтому
-/// дельта точнее; рывки сглаживаем, а нулю не даём затереть живую оценку.
-fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64) -> Option<f64> {
-    let mut sample = None;
+/// обновляется реже, чем идёт загрузка, поэтому дельта не всегда есть; зато
+/// когда байты растут, это прямое доказательство, что Steam качает.
+fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64, stale: Duration) -> Option<f64> {
+    let previous = cache.progress.take();
 
-    if let Some(previous) = cache.progress.take() {
-        let elapsed = previous.at.elapsed().as_secs_f64();
-
-        if previous.app_id == app_id {
-            if downloaded > previous.bytes && elapsed > 0.2 {
-                sample = Some((downloaded - previous.bytes) as f64 / elapsed);
-            }
-        } else {
+    if let Some(previous) = previous {
+        if previous.app_id != app_id {
             cache.rate_ema = None;
+        } else {
+            let elapsed = previous.at.elapsed();
+            if downloaded > previous.bytes && elapsed.as_secs_f64() > 0.2 {
+                let instant = (downloaded - previous.bytes) as f64 / elapsed.as_secs_f64();
+                cache.rate_ema = Some(match cache.rate_ema {
+                    Some(ema) => ema * 0.5 + instant * 0.5,
+                    None => instant,
+                });
+                cache.sample_at = Some(Instant::now());
+            } else if cache
+                .sample_at
+                .is_some_and(|at| at.elapsed() > stale)
+            {
+                // Байты встали: держать прошлую скорость нельзя, это вранье.
+                cache.rate_ema = None;
+            }
         }
     }
 
@@ -671,13 +778,6 @@ fn measured_rate(cache: &mut Cache, app_id: &str, downloaded: u64) -> Option<f64
         bytes: downloaded,
         at: Instant::now(),
     });
-
-    if let Some(instant) = sample {
-        cache.rate_ema = Some(match cache.rate_ema {
-            Some(ema) => ema * 0.5 + instant * 0.5,
-            None => instant,
-        });
-    }
 
     cache.rate_ema
 }
@@ -713,18 +813,29 @@ fn steam_status(cache: &mut Cache) -> SteamStatus {
         };
     };
 
-    let state = if download.state_flags & STATE_UPDATE_RUNNING != 0 {
+    let report = last_download_rate(&root);
+    // Свежая строка скорости (минута-две) — значит Steam действительно качает;
+    // прирост байтов это подтверждает, когда манифест успел обновиться.
+    let live = report
+        .as_ref()
+        .filter(|report| report.age < DOWNLOAD_FRESH)
+        .map(|report| report.bytes_per_second);
+    let rate = measured_rate(cache, &download.app_id, download.downloaded, DOWNLOAD_STALE).or(live);
+
+    // Флаг Running Steam на этой машине не ставит даже во время загрузки,
+    // поэтому состояние решает не он, а живая скорость.
+    let state = if rate.is_some() {
+        "загрузка"
+    } else if download.state_flags & STATE_UPDATE_RUNNING != 0
+        && download.state_flags & STATE_UPDATE_PAUSED == 0
+    {
         "загрузка"
     } else if download.state_flags & STATE_UPDATE_QUEUED != 0 {
         "в очереди"
-    } else if download.state_flags & (STATE_UPDATE_PAUSED | STATE_UPDATE_STARTED) != 0 {
-        "пауза"
     } else {
-        "загрузка"
+        "пауза"
     };
 
-    let rate = measured_rate(cache, &download.app_id, download.downloaded)
-        .or_else(|| last_download_rate(&root));
     let remaining = download.total.saturating_sub(download.downloaded);
 
     SteamStatus {
@@ -931,6 +1042,79 @@ mod tests {
         assert_eq!(eta_seconds(4000, Some(1000.0)), Some(4));
         assert_eq!(eta_seconds(4000, Some(0.0)), None);
         assert_eq!(eta_seconds(4000, None), None);
+    }
+
+    #[test]
+    fn parses_log_timestamp() {
+        // Лог пишет местное время: в UTC строка обязана сдвинуться ровно
+        // на смещение зоны машины.
+        let stamp = log_timestamp_ms("[2026-10-23 00:59:24] Current download rate: 63.096 Mbps")
+            .expect("отметка времени разбирается");
+
+        assert_eq!(stamp, 1_792_717_164_000 - local_offset_ms());
+        // Без отметки времени строку сравнивать с «сейчас» нельзя.
+        assert_eq!(log_timestamp_ms("stats: (CDN, 33) 18 MB"), None);
+        assert_eq!(log_timestamp_ms("[не дата] мусор"), None);
+    }
+
+    #[test]
+    fn parses_timezone_offset() {
+        // На этой машине зона задана, значит смещение — не ноль и кратно минутам.
+        let offset = local_offset_ms();
+        assert_eq!(offset % 60_000, 0, "смещение зоны не кратно минуте");
+        assert!(offset.abs() <= 14 * 3_600_000, "смещение зоны вне разумных границ");
+    }
+
+    /// Свежая строка скорости означает идущую загрузку, старая — паузу.
+    #[test]
+    fn download_state_follows_rate_freshness() {
+        let root = std::env::temp_dir().join("metricks-steam-test");
+        let logs = root.join("logs");
+        fs::create_dir_all(&logs).expect("каталог логов");
+        let log = logs.join("content_log.txt");
+
+        let local = |offset_seconds: i64| {
+            let at = now_ms() + local_offset_ms() - offset_seconds * 1_000;
+            let seconds = at.div_euclid(1_000);
+            let days = seconds.div_euclid(86_400);
+            let clock = seconds.rem_euclid(86_400);
+            // Обратный перевод к календарной дате: дни от эпохи.
+            let (year, month, day) = civil_from_days(days);
+            format!(
+                "[{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}] Current download rate: 60.0 Mbps",
+                clock / 3_600,
+                clock % 3_600 / 60,
+                clock % 60,
+            )
+        };
+
+        // Строка минуту назад: загрузка идёт.
+        fs::write(&log, format!("{}\n", local(60))).expect("свежий лог");
+        let fresh = last_download_rate(&root).expect("строка найдена");
+        assert!(fresh.age < DOWNLOAD_FRESH, "свежая строка: {:?}", fresh.age);
+
+        // Та же строка, но час назад: загрузка уже не идёт.
+        fs::write(&log, format!("{}\n", local(3_600))).expect("старый лог");
+        let stale = last_download_rate(&root).expect("строка найдена");
+        assert!(stale.age > DOWNLOAD_FRESH, "старая строка: {:?}", stale.age);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Дни от эпохи обратно в календарную дату — нужен тесту выше.
+    fn civil_from_days(days: i64) -> (i64, i64, i64) {
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let day_of_era = z.rem_euclid(146_097);
+        let year_of_era =
+            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+        let year = year_of_era + era * 400;
+        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+        let month_shift = (5 * day_of_year + 2) / 153;
+        let day = day_of_year - (153 * month_shift + 2) / 5 + 1;
+        let month = month_shift + if month_shift < 10 { 3 } else { -9 };
+
+        (year + i64::from(month <= 2), month, day)
     }
 
     #[test]
