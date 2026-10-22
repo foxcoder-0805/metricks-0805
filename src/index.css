@@ -152,21 +152,6 @@ button {
   background: var(--purple-300);
 }
 
-.chip--warn .chip__dot {
-  background: #d8b4fe;
-  box-shadow: 0 0 0 3px rgba(216, 180, 254, 0.2);
-}
-
-.chip--error .chip__dot {
-  background: #a855f7;
-  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.28);
-}
-
-.chip--error {
-  border-color: rgba(168, 85, 247, 0.5);
-  color: var(--purple-200);
-}
-
 .icon-btn {
   display: grid;
   place-items: center;
@@ -233,9 +218,6 @@ button {
 
 .col-4 {
   grid-column: span 4;
-}
-.col-8 {
-  grid-column: span 8;
 }
 
 /* ─────────────── карточка ─────────────── */
@@ -325,112 +307,6 @@ button {
   font-size: 12px;
 }
 
-/* ─────────────── большая карточка: детализация сессии ─────────────── */
-
-.card--session {
-  padding: 26px 28px 24px;
-}
-
-.session__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 28px;
-  flex-wrap: wrap;
-}
-
-.session__task {
-  max-width: 48%;
-  font-size: 40px;
-  font-weight: 640;
-  letter-spacing: -0.035em;
-  line-height: 1.05;
-}
-
-.session__meta {
-  margin-left: auto;
-  max-width: 460px;
-}
-
-.session__summary {
-  color: var(--text-dim);
-  font-size: 13.5px;
-  line-height: 1.6;
-}
-
-.session__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.session__tag {
-  padding: 4px 11px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.session__progress {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 28px;
-}
-
-.session__bar {
-  flex: 1;
-  height: 8px;
-  border-radius: var(--r-pill);
-  background: var(--surface-3);
-  overflow: hidden;
-}
-
-.session__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--purple-600), var(--purple-400));
-}
-
-.session__counter {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.session__steps {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.session__step {
-  display: flex;
-  gap: 14px;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.session__time {
-  flex: none;
-  width: 40px;
-  color: var(--muted-dim);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-
-.session__text {
-  color: var(--muted);
-}
-
 /* ─────────────── подвал ─────────────── */
 
 .statusbar {
@@ -466,55 +342,6 @@ button {
   color: var(--purple-200);
 }
 
-/* ─────────────── панель настроек endpoint ─────────────── */
-
-.endpoint {
-  position: relative;
-}
-
-.endpoint__panel {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 10px);
-  right: 0;
-  width: 320px;
-  padding: 16px;
-  border-radius: var(--r-md);
-  border: 1px solid rgba(168, 85, 247, 0.32);
-  background: var(--surface-2);
-  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.95);
-}
-
-.endpoint__label {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.endpoint__row {
-  display: flex;
-  gap: 8px;
-}
-
-.endpoint__input {
-  flex: 1;
-  min-width: 0;
-  height: 38px;
-  padding: 0 12px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-elevated);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-}
-
-.endpoint__input:focus {
-  border-color: rgba(168, 85, 247, 0.5);
-  outline: none;
-}
-
 .btn {
   height: 38px;
   padding: 0 16px;
@@ -531,44 +358,9 @@ button {
   filter: brightness(1.1);
 }
 
-/* ─────────────── состояния ─────────────── */
-
-.overlay {
-  display: grid;
-  place-items: center;
-  gap: 10px;
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--muted);
-}
-
-.overlay__title {
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.overlay__hint {
-  max-width: 460px;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.overlay__hint code {
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--surface-3);
-  color: var(--purple-200);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
 /* ─────────────── адаптив ─────────────── */
 
 @media (max-width: 1240px) {
-  .col-8 {
-    grid-column: span 12;
-  }
   .col-4 {
     grid-column: span 6;
   }
@@ -578,8 +370,7 @@ button {
   .app {
     padding: 18px 16px 26px;
   }
-  .col-4,
-  .col-8 {
+  .col-4 {
     grid-column: span 12;
   }
   .brand__title {
