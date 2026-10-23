@@ -26,10 +26,10 @@ use serde::Serialize;
 ///
 /// Окно широкое (186 мс): полоски отвечают за полутон, а полутон у C4 —
 /// всего 15 Гц, поэтому тонкий бин 5.4 Гц важнее короткой задержки.
-const SAMPLE_RATE: usize = 44_100;
+pub(crate) const SAMPLE_RATE: usize = 44_100;
 const WINDOW: usize = 8_192;
 /// Сколько сэмплов читаем за раз: между кадрами спектра проходит 23 мс.
-const CHUNK: usize = 1_024;
+pub(crate) const CHUNK: usize = 1_024;
 /// Гистерезис: после последнего громкого кадра визуализатор держится
 /// ещё немного, чтобы полоса не мигала на паузах между треками.
 const HOLD: Duration = Duration::from_secs(2);
@@ -568,17 +568,17 @@ impl PitchDetector {
 
 /// Результат детектора: частота и уверенность от 0 до 1.
 #[derive(Debug, Clone, Copy)]
-struct Pitch {
+pub(crate) struct Pitch {
     hz: f32,
     clarity: f32,
 }
 
 /// Сколько сэмплов уходит на определение тона. YIN нужен запас в один период
 /// самого низкого тона, поэтому окно анализа шире спектрального.
-const PITCH_WINDOW: usize = 2_048;
+pub(crate) const PITCH_WINDOW: usize = 2_048;
 
 /// Ищет основной тон в окне сэмплов. Возвращает `None`, если тона нет.
-fn detect_pitch(samples: &[f32], difference: &mut [f32]) -> Option<Pitch> {
+pub(crate) fn detect_pitch(samples: &[f32], difference: &mut [f32]) -> Option<Pitch> {
     let max_lag = (SAMPLE_RATE as f32 / PITCH_MIN_HZ).ceil() as usize;
     let min_lag = (SAMPLE_RATE as f32 / PITCH_MAX_HZ).floor() as usize;
 
@@ -657,7 +657,7 @@ fn interpolate_hz(difference: &[f32], lag: usize) -> f32 {
 }
 
 /// Переводит частоту в MIDI-номер; `None`, если нота далека от чистого строя.
-fn note_midi(pitch: Pitch) -> Option<i32> {
+pub(crate) fn note_midi(pitch: Pitch) -> Option<i32> {
     if pitch.clarity < PITCH_CLARITY {
         return None;
     }

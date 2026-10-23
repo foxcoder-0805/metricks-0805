@@ -29,3 +29,7 @@ src-tauri/target/
 # references
 sample.png
 sample.kra
+
+# источник эталонного таймлайна: видео разбирается ignored-тестом,
+# в репозиторий попадает только data/hall_of_the_mountain_king.json
+*.mp4
