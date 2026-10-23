@@ -81,10 +81,18 @@ export interface MusicStatus {
   available: boolean
   track: string
   artist: string
-  position: number | null
-  duration: number | null
+  /** Позиция и длительность в миллисекундах. */
+  positionMs: number | null
+  durationMs: number | null
   playing: boolean
   player: string
+  /** Адрес трека (`xesam:url`) — по нему узнаётся эталонный трек. */
+  url: string
+  /**
+   * Ожидаемые ноты эталонного трека на текущей позиции. Для чужого звука
+   * список пуст — там работает только живой детектор.
+   */
+  expectedNotes: string[]
 }
 
 /** Состояние клиента Steam. */
@@ -151,6 +159,11 @@ export interface AudioBars {
   bars: number[]
   /** Текущая нота, `—` если тон не распознан. */
   note: string
+  /**
+   * Индекс полоски этой ноты: на нотной сетке полоска — это один полутон,
+   * поэтому подсветка считается в Rust, где сетка и живёт.
+   */
+  noteBar: number | null
   /** Лента последних нот: свежая в конце. */
   notes: string[]
 }

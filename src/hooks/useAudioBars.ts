@@ -6,7 +6,13 @@ import type { AudioBars } from '../types'
 const FRAME_INTERVAL = 40
 
 /** Пустой кадр: звука нет, полоса скрыта. */
-const SILENT: AudioBars = { active: false, bars: [], note: '—', notes: [] }
+const SILENT: AudioBars = {
+  active: false,
+  bars: [],
+  note: '—',
+  noteBar: null,
+  notes: [],
+}
 
 /**
  * Следит за спектром системного звука. Захват живёт в Rust-слое,

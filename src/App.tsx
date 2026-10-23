@@ -39,10 +39,10 @@ export default function App() {
   const dismissCard = (id: string) => {
     setAdded((list) => list.filter((card) => card.id !== id))
 
-    // встроенные карточки помним, чтобы «Вернуть карточки» их восстановило
-    if (builtinCards.some((card) => card.id === id)) {
-      setDismissed((list) => (list.includes(id) ? list : [...list, id]))
-    }
+    // Карточки помним, чтобы «Вернуть карточки» их восстановило: это касается
+    // и встроенных, и карточек сессий OpenCode — их список каждый раз
+    // пересобирается из базы, и без этой памяти крестик ничего не закрывал.
+    setDismissed((list) => (list.includes(id) ? list : [...list, id]))
   }
 
   const addCard = (card: StatusCardData) => {
@@ -63,7 +63,10 @@ export default function App() {
           <AddCardTile onClick={() => setDialogOpen(true)} />
         </main>
 
-        <AudioVisualizer frame={audio} />
+        <AudioVisualizer
+          frame={audio}
+          expected={snapshot?.music.expectedNotes ?? []}
+        />
 
         <footer className="statusbar">
           <span className="statusbar__item">
