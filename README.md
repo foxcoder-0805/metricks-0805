@@ -59,7 +59,7 @@ The dashboard works fully offline: there is no backend and no network calls. The
 | Git | `git -C <session directory> rev-parse` and `status --porcelain` — the branch and the number of changed files in the OpenCode project |
 | Network | `nmcli device` — the active connection; `nmcli device wifi` adds the SSID and signal level for Wi-Fi |
 | User | `USER`/`LOGNAME` from the environment, falling back to `whoami`; `HOME` for the home directory |
-| Audio spectrum | `parec` on `@DEFAULT_MONITOR@` — the system output is captured into 1024-sample windows, windowed with a Hann function and turned into 32 logarithmic bars by a small radix-2 FFT in `src-tauri/src/audio.rs` |
+| Audio spectrum | `parec` on `@DEFAULT_MONITOR@` — the system output is captured into 8192-sample windows (read in 1024-sample steps so the bar keeps its frame rate), windowed with a Hann function and turned into 73 bars by a small radix-2 FFT in `src-tauri/src/audio.rs`: the grid is C1…C7 in semitones, so one bar is one note and the detected note's own bar is lit |
 | Notes | the same capture, but over a 2048-sample window: a YIN pitch detector finds the fundamental and names the note (A4 = 440); a trail keeps the last 14 notes |
 
 The Steam state does not come from `StateFlags`: on this machine the flag stays at 1026 without the Running bit even while Steam downloads. The card instead trusts the freshness of the `Current download rate` line in `content_log.txt` (Steam stops writing them when the download stops) and real byte growth, compared in the machine's own timezone — the log writes local time, not UTC.
@@ -130,5 +130,5 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 - Top row: the brand and a pill with the login of the current session on the right.
 - Cards: one per open OpenCode session, plus music, Steam, and any cards you add. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every second.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
-- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars with the current note lit.
+- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars, and the bar of the note being heard is highlighted.
 - Last tile: a `+` tile. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Every metric is live and marked "с машины" in the dialog.

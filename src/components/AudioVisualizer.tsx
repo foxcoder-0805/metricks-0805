@@ -40,7 +40,10 @@ export function AudioVisualizer({ frame }: AudioVisualizerProps) {
           <span
             // Полоски обновляются на месте, поэтому индекс — честный ключ.
             key={index}
-            className="visualizer__bar"
+            // Полоска текущей ноты горит ярче: видно, куда именно попал тон.
+            className={`visualizer__bar${
+              visible && index === frame.noteBar ? ' visualizer__bar--note' : ''
+            }`}
             style={{ transform: `scaleY(${Math.max(0.02, level).toFixed(3)})` }}
           />
         ))}

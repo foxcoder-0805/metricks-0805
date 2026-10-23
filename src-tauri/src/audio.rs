@@ -22,21 +22,25 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-/// Частота дискретизации и размер окна БПФ. При 44.1 кГц окно даёт
-/// примерно 21 Гц на бин — для 32 полосок этого хватает.
+/// Частота дискретизации, размер окна БПФ и шаг чтения.
+///
+/// Окно широкое (186 мс): полоски отвечают за полутон, а полутон у C4 —
+/// всего 15 Гц, поэтому тонкий бин 5.4 Гц важнее короткой задержки.
 const SAMPLE_RATE: usize = 44_100;
-const WINDOW: usize = 1024;
+const WINDOW: usize = 8_192;
+/// Сколько сэмплов читаем за раз: между кадрами спектра проходит 23 мс.
+const CHUNK: usize = 1_024;
 /// Гистерезис: после последнего громкого кадра визуализатор держится
 /// ещё немного, чтобы полоса не мигала на паузах между треками.
 const HOLD: Duration = Duration::from_secs(2);
 /// Ниже этого RMS считаем, что звука нет — как `silence` в cava.
 const SILENCE: f32 = 0.004;
 
-/// Сколько полосок рисует фронтенд по умолчанию.
-const DEFAULT_BARS: usize = 32;
-/// Диапазон спектра, который раскладывается по полоскам.
-const LOW_HZ: f64 = 40.0;
-const HIGH_HZ: f64 = 16_000.0;
+/// Сколько полосок рисует фронтенд по умолчанию: по одной на полутон.
+const DEFAULT_BARS: usize = 73;
+/// Нотная сетка полосок: полутон от C1 (MIDI 24) до C7 (MIDI 96).
+const LOW_MIDI: i32 = 24;
+const HIGH_MIDI: i32 = 96;
 const MIN_DB: f64 = -72.0;
 const MAX_DB: f64 = -6.0;
 
@@ -69,6 +73,9 @@ pub struct AudioBars {
     pub bars: Vec<f32>,
     /// Текущая нота, `—` если тон не распознан.
     pub note: String,
+    /// Индекс полоски этой ноты: её и подсвечиваем. `None` — тона нет.
+    /// Считается здесь, а не на фронтенде: сетка полосок живёт в Rust.
+    pub note_bar: Option<usize>,
     /// Лента последних нот: свежая в конце.
     pub notes: Vec<String>,
 }
@@ -90,12 +97,16 @@ pub fn get_audio_bars() -> AudioBars {
         Some(frame) if frame.fits(BAR_COUNT.load(Ordering::Relaxed)) => frame,
         // Первый кадр приходит через несколько десятков миллисекунд: до него
         // отдаём пустую полосу, а не заставляем фронтенд ждать.
-        Some(frame) => AudioBars {
-            active: frame.active,
-            bars: resample(&frame.bars, BAR_COUNT.load(Ordering::Relaxed)),
-            note: frame.note,
-            notes: frame.notes,
-        },
+        Some(frame) => {
+            let count = BAR_COUNT.load(Ordering::Relaxed);
+            AudioBars {
+                active: frame.active,
+                bars: resample(&frame.bars, count),
+                note: frame.note.clone(),
+                note_bar: midi_of_note(&frame.note).and_then(|midi| bar_of_midi(midi, count)),
+                notes: frame.notes,
+            }
+        }
         None => AudioBars::default(),
     }
 }
@@ -175,7 +186,7 @@ fn spawn_parec() -> std::io::Result<Child> {
 fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
-        let mut raw = vec![0u8; 4 * WINDOW];
+        let mut raw = vec![0u8; 4 * CHUNK];
         let mut samples: Vec<f32> = Vec::with_capacity(WINDOW * 2);
         let mut spectrum = Spectrum::new(WINDOW);
         let mut pitch = PitchDetector::new();
@@ -198,34 +209,38 @@ fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
                     .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
             );
 
-            // Шаг в половину окна: полоса обновляется чаще, чем раз в окно.
-            while samples.len() >= WINDOW {
-                let rms = (samples.iter().map(|value| value * value).sum::<f32>()
-                    / WINDOW as f32)
-                    .sqrt();
-
-                if rms > SILENCE {
-                    last_loud = Some(std::time::Instant::now());
-                }
-
-                let active = last_loud.is_some_and(|at| at.elapsed() < HOLD);
-                let count = BAR_COUNT.load(Ordering::Relaxed);
-                let frame = if active {
-                    pitch.listen(&samples[..WINDOW]);
-                    AudioBars {
-                        active: true,
-                        bars: spectrum.bars(&samples[..WINDOW]),
-                        note: pitch.note(),
-                        notes: pitch.trail(),
-                    }
-                } else {
-                    pitch.reset();
-                    AudioBars::silent(count)
-                };
-
-                lock().latest = Some(frame);
-                samples.drain(..WINDOW / 2);
+            // Шаг в CHUNK, а не в половину окна: широкое окно спектра не должно
+            // замедлять обновление полосы.
+            if samples.len() < WINDOW {
+                continue;
             }
+
+            let rms = (samples[..WINDOW].iter().map(|value| value * value).sum::<f32>()
+                / WINDOW as f32)
+                .sqrt();
+
+            if rms > SILENCE {
+                last_loud = Some(std::time::Instant::now());
+            }
+
+            let active = last_loud.is_some_and(|at| at.elapsed() < HOLD);
+            let count = BAR_COUNT.load(Ordering::Relaxed);
+            let frame = if active {
+                pitch.listen(&samples[..WINDOW]);
+                AudioBars {
+                    active: true,
+                    bars: spectrum.bars(&samples[..WINDOW]),
+                    note: pitch.note(),
+                    note_bar: pitch.note_midi().and_then(|midi| bar_of_midi(midi, count)),
+                    notes: pitch.trail(),
+                }
+            } else {
+                pitch.reset();
+                AudioBars::silent(count)
+            };
+
+            lock().latest = Some(frame);
+            samples.drain(..CHUNK);
         }
     });
 }
@@ -322,7 +337,7 @@ impl Spectrum {
         }
     }
 
-    /// Полоски спектра в диапазоне от `LOW_HZ` до `HIGH_HZ`.
+    /// Полоски спектра на нотной сетке C1…C7: по одному полутону на полоску.
     fn bars(&mut self, samples: &[f32]) -> Vec<f32> {
         let count = BAR_COUNT.load(Ordering::Relaxed);
 
@@ -401,13 +416,26 @@ impl Spectrum {
     }
 }
 
-/// Частотная граница полоски: логарифмическая шкала, как в cava/эквалайзерах.
+/// Частотная граница полоски: нотная сетка, по одному полутону на полоску.
+///
+/// Полоска `i` отвечает ноте с MIDI-номером `LOW_MIDI + i`, а её верхняя
+/// граница — следующий полутон. Так столбик спектра и столбик ноты —
+/// одно и то же место на полосе.
 fn bar_edge(bar: usize, count: usize, bins: usize) -> usize {
-    let ratio = bar as f64 / count as f64;
-    let hz = LOW_HZ * (HIGH_HZ / LOW_HZ).powf(ratio);
+    let span = (HIGH_MIDI - LOW_MIDI + 1) as f64;
+    let midi = LOW_MIDI as f64 + bar as f64 * span / count as f64;
+    let hz = 440.0 * 2f64.powf((midi - 69.0) / 12.0);
     let max_hz = SAMPLE_RATE as f64 / 2.0;
 
     ((hz / max_hz * bins as f64) as usize).clamp(0, bins - 1)
+}
+
+/// Номер полоски для ноты: туда же подсвечивается распознанный тон.
+fn bar_of_midi(midi: i32, count: usize) -> Option<usize> {
+    let index = (midi - LOW_MIDI) as f64 * count as f64 / (HIGH_MIDI - LOW_MIDI + 1) as f64;
+    let index = index.floor() as isize;
+
+    (index >= 0 && index < count as isize).then_some(index as usize)
 }
 
 /// Пересобирает кадр под новое число полосок, когда окно изменило ширину.
@@ -436,13 +464,13 @@ struct PitchDetector {
     buffer: Vec<f32>,
     /// Разностная функция: переиспользуется между кадрами, чтобы не мусорить.
     difference: Vec<f32>,
-    /// Текущая распознанная нота; `None` — тона нет.
-    note: Option<String>,
+    /// Текущая распознанная нота (MIDI); `None` — тона нет.
+    note: Option<i32>,
     /// Нота-кандидат: она станет текущей после `PITCH_CONFIRM` кадров подряд.
-    candidate: Option<String>,
+    candidate: Option<i32>,
     confirmations: u32,
     /// Лента нот: свежая в конце.
-    trail: std::collections::VecDeque<String>,
+    trail: std::collections::VecDeque<i32>,
 }
 
 impl PitchDetector {
@@ -459,12 +487,17 @@ impl PitchDetector {
 
     /// Текущая нота строкой: `—`, если тон не распознан.
     fn note(&self) -> String {
-        self.note.clone().unwrap_or_else(|| String::from("—"))
+        self.note.map(note_label).unwrap_or_else(|| String::from("—"))
+    }
+
+    /// Текущая нота в MIDI: её номер ложится на полоску спектра.
+    fn note_midi(&self) -> Option<i32> {
+        self.note
     }
 
     /// Лента последних нот.
     fn trail(&self) -> Vec<String> {
-        self.trail.iter().cloned().collect()
+        self.trail.iter().copied().map(note_label).collect()
     }
 
     fn reset(&mut self) {
@@ -489,7 +522,7 @@ impl PitchDetector {
             return;
         }
 
-        match detect_pitch(&self.buffer, &mut self.difference).and_then(note_name) {
+        match detect_pitch(&self.buffer, &mut self.difference).and_then(note_midi) {
             Some(note) => self.settle(note),
             // Тон пропал: держим последнюю ноту до первого уверенного кадра,
             // чтобы лента не мигала между слогами.
@@ -501,17 +534,17 @@ impl PitchDetector {
     }
 
     /// Принимает распознанную ноту, отсеивая дребезг.
-    fn settle(&mut self, note: String) {
-        if self.note.as_deref() == Some(note.as_str()) {
+    fn settle(&mut self, note: i32) {
+        if self.note == Some(note) {
             self.candidate = None;
             self.confirmations = 0;
             return;
         }
 
-        if self.candidate.as_deref() == Some(note.as_str()) {
+        if self.candidate == Some(note) {
             self.confirmations += 1;
         } else {
-            self.candidate = Some(note.clone());
+            self.candidate = Some(note);
             self.confirmations = 1;
         }
 
@@ -519,7 +552,7 @@ impl PitchDetector {
             return;
         }
 
-        self.note = Some(note.clone());
+        self.note = Some(note);
         self.candidate = None;
         self.confirmations = 0;
 
@@ -623,8 +656,8 @@ fn interpolate_hz(difference: &[f32], lag: usize) -> f32 {
     SAMPLE_RATE as f32 / (lag as f32 + shift)
 }
 
-/// Переводит частоту в имя ноты; `—`, если нота далека от чистого строя.
-fn note_name(pitch: Pitch) -> Option<String> {
+/// Переводит частоту в MIDI-номер; `None`, если нота далека от чистого строя.
+fn note_midi(pitch: Pitch) -> Option<i32> {
     if pitch.clarity < PITCH_CLARITY {
         return None;
     }
@@ -639,15 +672,30 @@ fn note_name(pitch: Pitch) -> Option<String> {
     }
 
     let index = rounded as i32;
-    if !(0..=127).contains(&index) {
-        return None;
-    }
+    (0..=127).contains(&index).then_some(index)
+}
 
-    let name = NOTE_NAMES[(index % 12) as usize];
+/// Человекочитаемое имя ноты: 69 — `A4`.
+fn note_label(midi: i32) -> String {
+    let name = NOTE_NAMES[(midi.rem_euclid(12)) as usize];
     // Октава в стандарте MIDI: 60 — C4.
-    let octave = index / 12 - 1;
+    let octave = midi / 12 - 1;
 
-    Some(format!("{name}{octave}"))
+    format!("{name}{octave}")
+}
+
+/// Обратное преобразование к [[note_label]]: `A4` → 69. `None`, если имя
+/// ноты не разобрать (например, прочерк `—`).
+fn midi_of_note(label: &str) -> Option<i32> {
+    // Имя — буквы, октава — всё после них (со знаком: `C-1`).
+    let split = label.find(|ch: char| !ch.is_ascii_alphabetic())?;
+    let name = &label[..split];
+    let octave: i32 = label[split..].trim().parse().ok()?;
+    let pitch_class = NOTE_NAMES.iter().position(|note| *note == name)? as i32;
+
+    // Имя ноты существует для любой октавы, включая отрицательные.
+    let midi = (octave + 1) * 12 + pitch_class;
+    (0..=127).contains(&midi).then_some(midi)
 }
 
 #[cfg(test)]
@@ -655,7 +703,7 @@ mod tests {
     use super::*;
 
     fn spectrum_bars(signal: &[f32]) -> Vec<f32> {
-        BAR_COUNT.store(32, Ordering::Relaxed);
+        BAR_COUNT.store(DEFAULT_BARS, Ordering::Relaxed);
         let mut spectrum = Spectrum::new(WINDOW);
         spectrum.bars(signal)
     }
@@ -675,10 +723,10 @@ mod tests {
             .map(|(index, _)| index)
             .unwrap();
 
-        // 440 Гц при логарифмической шкале 40…16000 попадает в 12-ю полоску
-        // из 32 (перекрытие соседних полосок даёт небольшую вилку).
+        // 440 Гц — это A4, MIDI 69; на сетке C1…C7 (73 полоски, по полутону
+        // на каждую) это 45-я полоска.
         assert!(
-            (11..=13).contains(&loudest),
+            (44..=46).contains(&loudest),
             "тон 440 Гц попал в полоску {loudest}"
         );
         assert!(bars[loudest] > 0.5, "полоска тона слишком тихая");
@@ -744,10 +792,43 @@ mod tests {
     #[test]
     fn bar_edges_are_sorted_and_inside_the_spectrum() {
         let bins = WINDOW / 2;
-        let edges: Vec<usize> = (0..=32).map(|bar| bar_edge(bar, 32, bins)).collect();
+        let edges: Vec<usize> = (0..=DEFAULT_BARS)
+            .map(|bar| bar_edge(bar, DEFAULT_BARS, bins))
+            .collect();
 
         assert!(edges.windows(2).all(|pair| pair[0] <= pair[1]));
-        assert!(edges[32] < bins);
+        assert!(edges[DEFAULT_BARS] < bins);
+    }
+
+    #[test]
+    fn one_bar_is_one_semitone() {
+        // Границы полосок — частоты нот сетки C1…C7: соседние отличаются полутоном.
+        let bins = WINDOW / 2;
+        let edge_hz = |bar: usize| bar_edge(bar, DEFAULT_BARS, bins) as f64 * SAMPLE_RATE as f64
+            / 2.0
+            / bins as f64;
+
+        let ratio = edge_hz(12) / edge_hz(0);
+        // Границы округляются до бина, поэтому допуск — не лучше половины бина.
+        assert!((ratio - 2.0).abs() < 0.1, "октава = {ratio} вместо 2");
+
+        // 440 Гц — A4 (MIDI 69) — лежит внутри своей полоски.
+        let a4 = bar_of_midi(69, DEFAULT_BARS);
+        assert_eq!(a4, Some(45));
+        assert!(edge_hz(45) <= 440.0 && 440.0 < edge_hz(46));
+    }
+
+    #[test]
+    fn note_labels_round_trip_through_bar_index() {
+        // Подсветка полоски строится из MIDI-номера: имя ноты должно
+        // собираться и разбираться обратно без потерь.
+        for midi in [0, 24, 60, 69, 96, 127] {
+            let label = note_label(midi);
+            assert_eq!(midi_of_note(&label), Some(midi), "нота {label}");
+        }
+
+        assert_eq!(midi_of_note("—"), None);
+        assert_eq!(midi_of_note(""), None);
     }
 
     #[test]
@@ -765,7 +846,9 @@ mod tests {
 
     fn detected(signal: &[f32]) -> Option<String> {
         let mut difference = vec![0.0; PITCH_WINDOW / 2];
-        detect_pitch(signal, &mut difference).and_then(note_name)
+        detect_pitch(signal, &mut difference)
+            .and_then(note_midi)
+            .map(note_label)
     }
 
     #[test]

@@ -613,6 +613,12 @@ button {
   transition: transform 90ms linear;
 }
 
+/* Полоска ноты, которую детектор держит прямо сейчас. */
+.visualizer__bar--note {
+  background: linear-gradient(180deg, var(--purple-100), var(--purple-300));
+  box-shadow: 0 0 18px rgba(216, 180, 254, 0.75);
+}
+
 .statusbar {
   display: flex;
   flex: 0 0 auto;
