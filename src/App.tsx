@@ -63,7 +63,10 @@ export default function App() {
           <AddCardTile onClick={() => setDialogOpen(true)} />
         </main>
 
-        <AudioVisualizer frame={audio} />
+        <AudioVisualizer
+          frame={audio}
+          expected={snapshot?.music.expectedNotes ?? []}
+        />
 
         <footer className="statusbar">
           <span className="statusbar__item">

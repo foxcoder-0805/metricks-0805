@@ -52,7 +52,7 @@ The dashboard works fully offline: there is no backend and no network calls. The
 | Card | Source |
 | --- | --- |
 | OpenCode | `~/.local/share/opencode/opencode.db` — every session touched in the last day, newest first: title, last request, model, and what the session is doing right now (a running tool, thinking, or waiting) read from the last assistant message |
-| Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist and position |
+| Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist, `xesam:url` and position in milliseconds; for the reference track the card's neighbours in the spectrum row also get the [expected notes](#ground-truth) of the current position |
 | Steam | Steam process, `steamapps/appmanifest_<id>.acf` (all libraries from `libraryfolders.vdf`) for the game, downloaded bytes and total size, plus `logs/content_log.txt` for the download rate — percent, speed in MB/s and time left are computed from them |
 | System | `/proc/meminfo` (used memory), `/proc/loadavg`, `/proc/uptime` and `df -B1 /` (root disk usage) |
 | Window | `hyprctl activewindow -j` — the class, title and workspace of the focused window |
@@ -152,5 +152,5 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 - Top row: the brand and a pill with the login of the current session on the right.
 - Cards: one per open OpenCode session, plus music, Steam, and any cards you add. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every second.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
-- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars, and the bar of the note being heard is highlighted.
+- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars, and the bar of the note being heard is highlighted. While the reference track plays, the expected notes from the video timeline sit ghosted on the left of the trail, so the heard notes and the sheet of the screen can be compared at a glance.
 - Last tile: a `+` tile. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Every metric is live and marked "с машины" in the dialog.

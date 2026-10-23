@@ -69,12 +69,18 @@ pub struct MusicStatus {
     pub available: bool,
     pub track: String,
     pub artist: String,
-    /// Позиция и длительность в секундах, если плеер их отдаёт.
-    pub position: Option<i64>,
-    pub duration: Option<i64>,
+    /// Позиция и длительность в миллисекундах, если плеер их отдаёт:
+    /// MPRIS хранит микросекунды, и целые секунды здесь теряли точность.
+    pub position_ms: Option<i64>,
+    pub duration_ms: Option<i64>,
     pub playing: bool,
     /// Имя плеера: Firefox, Spotify, mpv…
     pub player: String,
+    /// Адрес трека (`xesam:url`): по нему узнаётся эталонный трек.
+    pub url: String,
+    /// Ожидаемые ноты эталонного трека на текущей позиции. Для чужого звука
+    /// список пуст — там работает только живой детектор.
+    pub expected_notes: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -570,8 +576,9 @@ struct Player {
     name: String,
     title: String,
     artist: String,
-    duration: Option<i64>,
-    position: Option<i64>,
+    url: String,
+    duration_ms: Option<i64>,
+    position_ms: Option<i64>,
     playing: bool,
 }
 
@@ -632,12 +639,13 @@ fn mpris_player(bus_name: &str) -> Player {
                 .map(str::to_string)
         })
         .unwrap_or_default();
-    let duration = entry("mpris:length")
+    let url = entry("xesam:url")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let duration_ms = entry("mpris:length").and_then(|value| value.as_i64()).map(micros_to_ms);
+    let position_ms = mpris_property(bus_name, player_interface, "Position")
         .and_then(|value| value.as_i64())
-        .map(|micros| micros / 1_000_000);
-    let position = mpris_property(bus_name, player_interface, "Position")
-        .and_then(|value| value.as_i64())
-        .map(|micros| micros / 1_000_000);
+        .map(micros_to_ms);
     let playing = mpris_property(bus_name, player_interface, "PlaybackStatus")
         .and_then(|value| value.as_str().map(|status| status == "Playing"))
         .unwrap_or(false);
@@ -650,10 +658,17 @@ fn mpris_player(bus_name: &str) -> Player {
         name: player,
         title,
         artist,
-        duration,
-        position,
+        url,
+        duration_ms,
+        position_ms,
         playing,
     }
+}
+
+/// Микросекунды MPRIS → миллисекунды. Время позиции нам нужно с точностью
+/// до миллисекунды: по нему синхронизируются ожидаемые ноты эталонного трека.
+fn micros_to_ms(micros: i64) -> i64 {
+    micros / 1_000
 }
 
 /// `org.mpris.MediaPlayer2.firefox.instance_1_51` → `Firefox`.
@@ -681,14 +696,29 @@ fn music_status() -> MusicStatus {
         return MusicStatus::default();
     };
 
+    // Ожидаемые ноты есть только у эталонного трека: для чужого звука на
+    // экране работает один живой детектор, совпадать не с чем.
+    let duration_secs = player.duration_ms.map(|ms| ms as f64 / 1000.0);
+    let expected_notes = if crate::hall::is_reference_track(
+        &player.url,
+        &player.title,
+        duration_secs,
+    ) {
+        crate::hall::expected_note_labels(player.position_ms.unwrap_or(0) as f64 / 1000.0)
+    } else {
+        Vec::new()
+    };
+
     MusicStatus {
         available: true,
         track: player.title,
         artist: player.artist,
-        position: player.position,
-        duration: player.duration,
+        position_ms: player.position_ms,
+        duration_ms: player.duration_ms,
         playing: player.playing,
         player: player.name,
+        url: player.url,
+        expected_notes,
     }
 }
 
@@ -1388,6 +1418,15 @@ mod tests {
             fallback_player_name("org.mpris.MediaPlayer2.firefox.instance_1_51"),
             "Firefox"
         );
+    }
+
+    #[test]
+    fn mpris_time_is_kept_in_milliseconds() {
+        // Позиция берётся в миллисекундах: секундная точность дрожала бы
+        // и ожидаемые ноты в конце трека не совпали бы с плеером.
+        assert_eq!(micros_to_ms(12_713_000), 12_713);
+        assert_eq!(micros_to_ms(0), 0);
+        assert_eq!(micros_to_ms(142_709_000), 142_709);
     }
 
     #[test]

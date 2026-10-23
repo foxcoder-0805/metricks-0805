@@ -676,7 +676,7 @@ pub(crate) fn note_midi(pitch: Pitch) -> Option<i32> {
 }
 
 /// Человекочитаемое имя ноты: 69 — `A4`.
-fn note_label(midi: i32) -> String {
+pub(crate) fn note_label(midi: i32) -> String {
     let name = NOTE_NAMES[(midi.rem_euclid(12)) as usize];
     // Октава в стандарте MIDI: 60 — C4.
     let octave = midi / 12 - 1;

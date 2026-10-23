@@ -157,8 +157,8 @@ function shortPath(path: string): string {
 function musicTrack(status: MusicStatus): string[] {
   if (!status.available) return ['ничего не играет']
 
-  const timing = status.duration
-    ? `${formatDuration(status.position ?? 0)}–${formatDuration(status.duration)}`
+  const timing = status.durationMs
+    ? `${formatDuration((status.positionMs ?? 0) / 1000)}–${formatDuration(status.durationMs / 1000)}`
     : status.artist || status.player || 'плеер без названия'
 
   return [truncate(status.track, 90), timing]

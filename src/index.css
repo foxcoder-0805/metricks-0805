@@ -586,6 +586,19 @@ button {
   transition: color 200ms ease;
 }
 
+/* Ожидаемые ноты эталонного трека: слева от ленты, призрачно. */
+.visualizer__expected {
+  display: flex;
+  gap: 8px;
+  margin-right: auto;
+  color: var(--purple-200);
+  opacity: 0.55;
+}
+
+.visualizer__expected-note {
+  letter-spacing: 0.04em;
+}
+
 .visualizer__note--now {
   color: var(--purple-200);
   font-size: 20px;

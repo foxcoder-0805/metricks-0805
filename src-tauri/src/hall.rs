@@ -45,6 +45,8 @@ const KEY_X_OFFSET: f64 = 27.7;
 const MIN_FRAMES: usize = 2;
 /// Кадров без блока, которые ещё не закрывают ноту: гасит мерцание кромки.
 const GAP_FRAMES: usize = 2;
+/// Длительность эталонного трека «In the Hall of the Mountain King».
+const TRACK_SECONDS: f64 = 142.71;
 
 /// Нота эталонного таймлайна: начало, длительность и MIDI-номер.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -80,6 +82,28 @@ pub fn notes_active_at(position: f64) -> Vec<i32> {
     active.sort_unstable();
     active.dedup();
     active
+}
+
+/// Те же ноты, но подписанные (`E3`, `A#4`) — так их рисует фронтенд.
+pub fn expected_note_labels(position: f64) -> Vec<String> {
+    notes_active_at(position)
+        .into_iter()
+        .map(crate::audio::note_label)
+        .collect()
+}
+
+/// Играет ли плеер эталонный трек: файл `great_music.mp3` либо название
+/// «In the Hall of the Mountain King», да ещё и та же длительность —
+/// другое исполнение той же пьесы длится иначе и ложного сравнения не будет.
+pub fn is_reference_track(url: &str, title: &str, duration_secs: Option<f64>) -> bool {
+    /// Допуск на разницу в округлении и кодеках.
+    const TOLERANCE_S: f64 = 0.5;
+
+    let named = url.ends_with("great_music.mp3")
+        || title.trim().eq_ignore_ascii_case("in the hall of the mountain king");
+    let length = duration_secs.is_some_and(|secs| (secs - TRACK_SECONDS).abs() <= TOLERANCE_S);
+
+    named && length
 }
 
 /// Белая клавиша `index` (0 = A0) и её MIDI-номер.
@@ -310,8 +334,6 @@ mod tests {
     const MATCH_TOLERANCE_S: f64 = 0.3;
     /// Доля совпадений YIN с эталоном, ниже которой сверка считается провалом.
     const MIN_MATCH_RATE: f64 = 0.6;
-    /// Длительность трека «In the Hall of the Mountain King».
-    const TRACK_SECONDS: f64 = 142.71;
 
     #[test]
     fn white_keys_cover_the_whole_piano() {
@@ -377,6 +399,52 @@ mod tests {
             "до 0.5 с нот нет"
         );
         assert!(!notes_active_at(13.0).is_empty(), "в середине трека ноты звучат");
+    }
+
+    #[test]
+    fn reference_track_is_recognised_by_name_and_length() {
+        assert!(is_reference_track(
+            "file:///home/foxcoder/Music/great_music.mp3",
+            "great_music",
+            Some(TRACK_SECONDS)
+        ));
+        assert!(is_reference_track(
+            "https://example/playlist",
+            "In the Hall of the Mountain King",
+            Some(142.5)
+        ));
+
+        // Чужой файл той же пьесы другой длительности — не эталон.
+        assert!(!is_reference_track(
+            "file:///home/foxcoder/Music/other.mp3",
+            "In the Hall of the Mountain King",
+            Some(180.0)
+        ));
+        // Свой файл, но плеер не отдал длительность: сверять не с чем.
+        assert!(!is_reference_track(
+            "file:///home/foxcoder/Music/great_music.mp3",
+            "great_music",
+            None
+        ));
+        // Совпадение только по названию недостаточно.
+        assert!(!is_reference_track("", "Bohemian Rhapsody", Some(TRACK_SECONDS)));
+    }
+
+    #[test]
+    fn expected_notes_follow_the_timeline() {
+        // В начале видео — титульные карточки, играть нечего.
+        assert!(expected_note_labels(0.2).is_empty());
+
+        // В середине трека эталон звучит, и ноты подписаны по-человечески.
+        let labels = expected_note_labels(13.0);
+        assert!(!labels.is_empty());
+        assert!(
+            labels.iter().all(|label| {
+                let pitch = label.as_bytes()[0];
+                matches!(pitch, b'A'..=b'G') && label.len() <= 3
+            }),
+            "подписи вида E3/A#4: {labels:?}"
+        );
     }
 
     /// Сверка YIN с эталоном: распознанные ноты трека должны попадать в ноты,
