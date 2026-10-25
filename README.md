@@ -59,13 +59,13 @@ The dashboard works fully offline: there is no backend and no network calls. The
 | Git | `git -C <session directory> rev-parse` and `status --porcelain` — the branch and the number of changed files in the OpenCode project |
 | Network | `nmcli device` — the active connection; `nmcli device wifi` adds the SSID and signal level for Wi-Fi |
 | User | `USER`/`LOGNAME` from the environment, falling back to `whoami`; `HOME` for the home directory |
-| Audio spectrum | `parec` on `@DEFAULT_MONITOR@` — the system output is captured into 8192-sample windows (read in 1024-sample steps so the bar keeps its frame rate), windowed with a Hann function and turned into 73 bars by a small radix-2 FFT in `src-tauri/src/audio.rs`: the grid is C1…C7 in semitones, so one bar is one note and the detected note's own bar is lit |
-| Notes | the same capture, but over a 2048-sample window: a YIN pitch detector finds the fundamental and names the note (A4 = 440); a trail keeps the last 14 notes |
+| Audio spectrum | `parec` on `@DEFAULT_MONITOR@` — the system output is captured into 8192-sample windows (read in 1024-sample steps so the bar keeps its frame rate), windowed with a Hann function and turned into 73 bars by a small radix-2 FFT in `src-tauri/src/audio.rs`: the grid is C1…C7 in semitones, so one bar is one note and the detected note's own bar is lit. The bar itself sits behind a gate: a frame counts as sound only when it is above −48 dBFS **and** the last second of levels is either musical (σ over 20% of the mean — hiss is flat) or has touched −22 dBFS, so a hissing monitor does not keep the bar on forever |
+| Notes | the same capture, but over a 2048-sample window: a YIN pitch detector finds the fundamental (the difference function must dip below 0.40 and land within 45 cents of the note grid) and names the note (A4 = 440); a note tolerates a few frames without a clean period before it is dropped, and a trail keeps the last 14 notes |
 | Ground truth | `data/hall_of_the_mountain_king.json` — the note timeline of "In the Hall of the Mountain King" (Kassia), extracted from the falling note blocks of the performance video; see [Ground truth](#ground-truth) |
 
 The Steam state does not come from `StateFlags`: on this machine the flag stays at 1026 without the Running bit even while Steam downloads. The card instead trusts the freshness of the `Current download rate` line in `content_log.txt` (Steam stops writing them when the download stops) and real byte growth, compared in the machine's own timezone — the log writes local time, not UTC.
 
-The spectrum is optional as well: without `parec` or any output the bar simply stays hidden. Notes appear only for a confident, in-tune pitch: chords and noise leave a dash instead of a guess.
+The spectrum is optional as well: without `parec` or any output the bar simply stays hidden, and a monitor hiss that merely sits above the silence floor is not mistaken for sound. Notes appear only for a confident pitch: chords and noise leave a dash instead of a guess.
 
 Everything degrades honestly: without a session the card says "сессий нет", without a player — "ничего не играет", without Steam — "не установлен", without a Hyprland window — "нет активного окна", outside a repository — "не git-репозиторий", without a connection — "нет подключения".
 
@@ -83,11 +83,13 @@ The collected snapshot can be inspected without the window:
 cargo test -- --ignored --nocapture live_snapshot_dump
 ```
 
-The audio bar and the pitch detector can be dumped the same way; the second one runs a track through `ffmpeg` and prints the notes it hears:
+The audio bar and the pitch detector can be dumped the same way; the second one runs a track through `ffmpeg` and prints the notes it hears. Two more diagnostics tune the detector: one counts how many frames produce a note, the other sweeps window length and thresholds against the reference timeline:
 
 ```bash
 cargo test -- --ignored --nocapture live_audio_dump
 METRICKS_TRACK=~/Music/track.mp3 cargo test -- --ignored --nocapture track_note_dump
+METRICKS_TRACK=~/Music/track.mp3 cargo test -- --ignored --nocapture pitch_stats_dump
+METRICKS_TRACK=~/Music/track.mp3 cargo test --release --lib -- --ignored --nocapture pitch_tuning_sweep
 ```
 
 ## Ground truth
@@ -100,7 +102,7 @@ The timeline is extracted from the video by `src-tauri/src/hall.rs`, which pipes
 - a block crossing the row y=520 is 20 px (≈33 ms) before it touches the keyboard at y=540, so the timeline is corrected for the fall speed (≈600 px/s, measured by cross-correlating rows y=440 and y=520);
 - segments narrower than a key are sparks and wider than three keys are title-card underlines — both are dropped, as are notes shorter than two frames, which removes every false "note" from the intro titles.
 
-The extraction is validated against the audio: the YIN detector run over the mp3 agrees with the video timeline in 82% of pitched windows (exact note or one octave off — bass notes are where YIN slips an octave). Both directions are reproducible:
+The extraction is validated against the audio: the YIN detector run over the mp3 agrees with the video timeline in 70% of the windows it names (exact note or one octave off — bass notes are where YIN slips an octave). `pitch_tuning_sweep` produced this balance: the original, much stricter thresholds agreed on 82% but named only 6% of the track — five times fewer notes on screen. Both directions are reproducible:
 
 ```bash
 cargo test -- --ignored --nocapture video_note_dump

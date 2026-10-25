@@ -532,6 +532,97 @@ mod tests {
         );
     }
 
+    /// Подбор настроек YIN по эталонному треку: печатает, сколько кадров
+    /// вообще даёт ноту и сколько из них попадает в ноты видео. Алгоритм
+    /// тяжёлый, поэтому запускается в релизе:
+    /// `METRICKS_TRACK=/путь/к/треку.mp3 cargo test --release --lib -- --ignored pitch_tuning_sweep`
+    #[test]
+    #[ignore]
+    fn pitch_tuning_sweep() {
+        use crate::audio::{detect_pitch_with, note_midi_with};
+        use std::io::Read as _;
+
+        let Ok(track) = std::env::var("METRICKS_TRACK") else {
+            println!("задай METRICKS_TRACK=/путь/к/треку.mp3");
+            return;
+        };
+
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v", "error", "-i", &track, "-f", "f32le", "-ac", "1", "-ar", "44100", "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ffmpeg");
+
+        let mut stdout = child.stdout.take().expect("stdout");
+        let mut raw = Vec::new();
+        stdout.read_to_end(&mut raw).expect("чтение трека");
+        let _ = child.kill();
+        let samples: Vec<f32> = raw
+            .chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            .collect();
+        drop(raw);
+
+        let notes = hall_notes();
+        // (окно, порог провала, уверенность, допуск в центах): первая строка —
+        // то, что стоит в продакшене, остальные — соседи для сравнения.
+        let tunings: &[(usize, f32, f32, f32)] = &[
+            (2_048, 0.40, 0.55, 45.0), // текущие настройки
+            (2_048, 0.15, 0.55, 30.0), // как было до подбора
+            (4_096, 0.40, 0.55, 45.0),
+            (4_096, 0.40, 0.55, 60.0),
+            (4_096, 0.40, 0.55, 30.0),
+            (8_192, 0.40, 0.55, 45.0),
+            (4_096, 0.30, 0.55, 45.0),
+        ];
+
+        println!(
+            "{:>6} {:>7} {:>7} {:>6} {:>7} {:>7}",
+            "окно", "порог", "увер.", "центы", "нотили", "совпало"
+        );
+
+        for &(window, threshold, clarity, cents) in tunings {
+            let mut difference = vec![0.0f32; window / 2];
+            let mut pitched = 0usize;
+            let mut matched = 0usize;
+            let mut frames = 0usize;
+
+            for end in (window..=samples.len()).step_by(crate::audio::CHUNK) {
+                frames += 1;
+                let slice = &samples[end - window..end];
+                let position =
+                    end as f64 / SAMPLE_RATE as f64 - window as f64 / SAMPLE_RATE as f64 / 2.0;
+
+                let Some(midi) =
+                    detect_pitch_with(slice, &mut difference, threshold, clarity)
+                        .and_then(|pitch| note_midi_with(pitch, clarity, cents))
+                else {
+                    continue;
+                };
+
+                pitched += 1;
+                if notes.iter().any(|note| {
+                    (note.t - MATCH_TOLERANCE_S..=note.t + note.d + MATCH_TOLERANCE_S)
+                        .contains(&position)
+                        && (note.m == midi || note.m == midi + 12 || note.m == midi - 12)
+                }) {
+                    matched += 1;
+                }
+            }
+
+            println!(
+                "{window:>6} {threshold:>7.2} {clarity:>7.2} {cents:>6.0} {:>6} ({:>4.0}%) {:>5} ({:>3.0}%)",
+                pitched,
+                pitched as f64 / frames.max(1) as f64 * 100.0,
+                matched,
+                matched as f64 / pitched.max(1) as f64 * 100.0,
+            );
+        }
+    }
+
     /// Переписывает эталонный таймлайн из видео.
     /// `cargo test -- --ignored --nocapture video_note_dump`
     #[test]

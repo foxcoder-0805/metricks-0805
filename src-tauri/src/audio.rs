@@ -33,8 +33,20 @@ pub(crate) const CHUNK: usize = 1_024;
 /// Гистерезис: после последнего громкого кадра визуализатор держится
 /// ещё немного, чтобы полоса не мигала на паузах между треками.
 const HOLD: Duration = Duration::from_secs(2);
-/// Ниже этого RMS считаем, что звука нет — как `silence` в cava.
+/// Абсолютный полог тишины: ниже него — цифровая тишина, как `silence` в cava.
+/// Это только нижняя граница: личный шум монитора может быть выше, и его
+/// считает [`audible`] по колебаниям уровня.
 const SILENCE: f32 = 0.004;
+/// Сколько последних кадров RMS смотрит порог тишины: секунда звука
+/// (кадр — 23 мс).
+const GATE_FRAMES: usize = 43;
+/// Насколько уровень должен колебаться, чтобы кадр считался звуком, а не
+/// шумом монитора: у шума RMS ровный (σ ≈ 2% среднего), у музыки — удары
+/// и паузы дают σ в разы больше среднего.
+const GATE_DYNAMIC: f32 = 0.2;
+/// Явно громкий уровень (−22 дБFS): это звук, даже если он ровный — так
+/// длинная нота не гасит полосу. Шум монитора до такого не доходит.
+const GATE_LOUD: f32 = 0.08;
 
 /// Сколько полосок рисует фронтенд по умолчанию: по одной на полутон.
 const DEFAULT_BARS: usize = 73;
@@ -50,12 +62,23 @@ const PITCH_MAX_HZ: f32 = 1200.0;
 /// Ниже этой «уверенности» YIN считаем, что тона нет: аккорды и шум не пишем.
 const PITCH_CLARITY: f32 = 0.55;
 /// Порог разностной функции YIN: провал ниже него считается периодом тона.
-const PITCH_THRESHOLD: f32 = 0.15;
-/// Насколько можно промахнуться от чистой ноты, прежде чем рисовать прочерк.
-const PITCH_CENTS: f32 = 30.0;
+/// 0.15 проходил лишь в 6% кадров эталонного трека — на реальной музыке
+/// период размывают обертоны; подбор `pitch_tuning_sweep` поднял порог
+/// до 0.40: теперь ноту даёт ~30% кадров, и 70% из них совпадают с видео.
+const PITCH_THRESHOLD: f32 = 0.40;
+/// Насколько можно промахнуться от чистой ноты, прежде чем считать, что
+/// тона нет: между нотами строя полтона — а дальше уже неоднозначно.
+const PITCH_CENTS: f32 = 45.0;
 /// Сколько кадров подряд должна подтвердиться новая нота, чтобы её сменить:
 /// иначе лента дребезжала бы на вибрато и переходах.
 const PITCH_CONFIRM: u32 = 2;
+/// Сколько кадров без чистого периода кандидат в ноту ещё держится. Чистый
+/// период находится не в каждом кадре (30% — уже хорошо), и без допуска
+/// подтверждение не собиралось бы даже на ровной ноте.
+const PITCH_MISSES: u32 = 4;
+/// Сколько кадров без тона текущая нота остаётся подсвеченной на полоске:
+/// дольше — подсветка врала бы, короче — мигала бы между нотами.
+const PITCH_HOLD: u32 = 21;
 /// Сколько нот хранит лента.
 const NOTE_TRAIL: usize = 14;
 
@@ -183,6 +206,34 @@ fn spawn_parec() -> std::io::Result<Child> {
         .spawn()
 }
 
+/// Решает, звук это или шум монитора. Фиксированного порога не хватает:
+/// на аналоговом выводе шум держится выше «тишины» и полоса висит всегда.
+/// Поэтому сравниваем не с единой цифрой, а с характером сигнала — у шума
+/// уровень ровный, у музыки пляшет; а уж −22 дБFS это точно звук.
+fn audible(recent: &std::collections::VecDeque<f32>, rms: f32) -> bool {
+    if rms <= SILENCE {
+        return false;
+    }
+
+    if rms > GATE_LOUD || recent.iter().any(|level| *level > GATE_LOUD) {
+        return true;
+    }
+
+    let count = recent.len() as f32;
+    let mean = recent.iter().sum::<f32>() / count;
+    if mean <= 0.0 {
+        return false;
+    }
+
+    let variance = recent
+        .iter()
+        .map(|level| (level - mean) * (level - mean))
+        .sum::<f32>()
+        / count;
+
+    variance.sqrt() > GATE_DYNAMIC * mean
+}
+
 fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -191,6 +242,8 @@ fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
         let mut spectrum = Spectrum::new(WINDOW);
         let mut pitch = PitchDetector::new();
         let mut last_loud: Option<std::time::Instant> = None;
+        let mut recent: std::collections::VecDeque<f32> =
+            std::collections::VecDeque::with_capacity(GATE_FRAMES + 1);
 
         loop {
             if stop.load(Ordering::Relaxed) {
@@ -219,7 +272,12 @@ fn reader_thread(stdout: std::process::ChildStdout, stop: Arc<AtomicBool>) {
                 / WINDOW as f32)
                 .sqrt();
 
-            if rms > SILENCE {
+            recent.push_back(rms);
+            if recent.len() > GATE_FRAMES {
+                recent.pop_front();
+            }
+
+            if audible(&recent, rms) {
                 last_loud = Some(std::time::Instant::now());
             }
 
@@ -469,6 +527,8 @@ struct PitchDetector {
     /// Нота-кандидат: она станет текущей после `PITCH_CONFIRM` кадров подряд.
     candidate: Option<i32>,
     confirmations: u32,
+    /// Кадров подряд без чистого периода: кандидат держится лишь недолго.
+    misses: u32,
     /// Лента нот: свежая в конце.
     trail: std::collections::VecDeque<i32>,
 }
@@ -481,6 +541,7 @@ impl PitchDetector {
             note: None,
             candidate: None,
             confirmations: 0,
+            misses: 0,
             trail: std::collections::VecDeque::with_capacity(NOTE_TRAIL),
         }
     }
@@ -505,6 +566,7 @@ impl PitchDetector {
         self.note = None;
         self.candidate = None;
         self.confirmations = 0;
+        self.misses = 0;
         self.trail.clear();
     }
 
@@ -523,12 +585,22 @@ impl PitchDetector {
         }
 
         match detect_pitch(&self.buffer, &mut self.difference).and_then(note_midi) {
-            Some(note) => self.settle(note),
-            // Тон пропал: держим последнюю ноту до первого уверенного кадра,
-            // чтобы лента не мигала между слогами.
+            Some(note) => {
+                self.misses = 0;
+                self.settle(note);
+            }
+            // Чистый период находится не в каждом кадре, поэтому кандидата
+            // гасим только после PITCH_MISSES промахов, а не сразу.
             None => {
-                self.candidate = None;
-                self.confirmations = 0;
+                self.misses += 1;
+                if self.misses >= PITCH_MISSES {
+                    self.candidate = None;
+                    self.confirmations = 0;
+                }
+                // Подсветка полоски не должна врать: полсекунды без тона — гасим.
+                if self.misses >= PITCH_HOLD {
+                    self.note = None;
+                }
             }
         }
     }
@@ -573,12 +645,24 @@ pub(crate) struct Pitch {
     clarity: f32,
 }
 
-/// Сколько сэмплов уходит на определение тона. YIN нужен запас в один период
-/// самого низкого тона, поэтому окно анализа шире спектрального.
+/// Сколько сэмплов уходит на определение тона (46 мс). `pitch_tuning_sweep`
+/// сравнил 46/93/186 мс на эталонном треке: короткое окно выиграло, потому
+/// что на быстрых пассажах длинное перекрывает сразу две ноты.
 pub(crate) const PITCH_WINDOW: usize = 2_048;
 
 /// Ищет основной тон в окне сэмплов. Возвращает `None`, если тона нет.
 pub(crate) fn detect_pitch(samples: &[f32], difference: &mut [f32]) -> Option<Pitch> {
+    detect_pitch_with(samples, difference, PITCH_THRESHOLD, PITCH_CLARITY)
+}
+
+/// То же с настройками порогов: диагностика `pitch_tuning_sweep` подбирает
+/// их по эталонному треку, не размножая алгоритм в тестах.
+pub(crate) fn detect_pitch_with(
+    samples: &[f32],
+    difference: &mut [f32],
+    threshold: f32,
+    clarity_floor: f32,
+) -> Option<Pitch> {
     let max_lag = (SAMPLE_RATE as f32 / PITCH_MIN_HZ).ceil() as usize;
     let min_lag = (SAMPLE_RATE as f32 / PITCH_MAX_HZ).floor() as usize;
 
@@ -616,13 +700,13 @@ pub(crate) fn detect_pitch(samples: &[f32], difference: &mut [f32]) -> Option<Pi
     // Первый провал ниже порога — кандидат в период; дальше ищем его минимум.
     let mut lag = min_lag.max(2);
     while lag < max_lag {
-        if difference[lag] < PITCH_THRESHOLD {
+        if difference[lag] < threshold {
             while lag + 1 < max_lag && difference[lag + 1] < difference[lag] {
                 lag += 1;
             }
 
             let clarity = (1.0 - difference[lag]).clamp(0.0, 1.0);
-            if clarity < PITCH_CLARITY {
+            if clarity < clarity_floor {
                 return None;
             }
 
@@ -658,7 +742,12 @@ fn interpolate_hz(difference: &[f32], lag: usize) -> f32 {
 
 /// Переводит частоту в MIDI-номер; `None`, если нота далека от чистого строя.
 pub(crate) fn note_midi(pitch: Pitch) -> Option<i32> {
-    if pitch.clarity < PITCH_CLARITY {
+    note_midi_with(pitch, PITCH_CLARITY, PITCH_CENTS)
+}
+
+/// То же с настройками допусков — для подбора порогов в `pitch_tuning_sweep`.
+pub(crate) fn note_midi_with(pitch: Pitch, clarity_floor: f32, cents_window: f32) -> Option<i32> {
+    if pitch.clarity < clarity_floor {
         return None;
     }
 
@@ -667,7 +756,7 @@ pub(crate) fn note_midi(pitch: Pitch) -> Option<i32> {
     let rounded = midi.round();
     let cents = (midi - rounded).abs() * 100.0;
 
-    if cents > PITCH_CENTS {
+    if cents > cents_window {
         return None;
     }
 
@@ -782,6 +871,71 @@ mod tests {
         println!();
     }
 
+    /// Диагностика: где именно теряются ноты — в поиске тона или в фильтре
+    /// чистого строя? Считает кадры, где YIN нашёл период, и кадры, где
+    /// период дошёл до ноты.
+    /// `METRICKS_TRACK=/путь/к/треку.mp3 cargo test -- --ignored --nocapture pitch_stats_dump`
+    #[test]
+    #[ignore]
+    fn pitch_stats_dump() {
+        use std::io::Read as _;
+
+        let Ok(track) = std::env::var("METRICKS_TRACK") else {
+            println!("задай METRICKS_TRACK=/путь/к/треку.mp3");
+            return;
+        };
+
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v", "error", "-i", &track, "-f", "f32le", "-ac", "1", "-ar", "44100", "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ffmpeg");
+
+        let mut stdout = child.stdout.take().expect("stdout");
+        let mut raw = vec![0u8; CHUNK * 4];
+        let mut samples: Vec<f32> = Vec::with_capacity(PITCH_WINDOW * 2);
+        let mut difference = vec![0.0; PITCH_WINDOW / 2];
+        let mut total = 0usize;
+        let mut pitched = 0usize;
+        let mut found = 0usize;
+        let mut loudest = 0.0f32;
+
+        while stdout.read_exact(&mut raw).is_ok() {
+            total += 1;
+            samples.extend(
+                raw.chunks_exact(4)
+                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            );
+
+            if samples.len() > PITCH_WINDOW {
+                let excess = samples.len() - PITCH_WINDOW;
+                samples.drain(..excess);
+            }
+            if samples.len() < PITCH_WINDOW {
+                continue;
+            }
+
+            if let Some(pitch) = detect_pitch(&samples, &mut difference) {
+                found += 1;
+                loudest = loudest.max(pitch.clarity);
+                if note_midi(pitch).is_some() {
+                    pitched += 1;
+                }
+            }
+        }
+
+        let _ = child.kill();
+        println!(
+            "кадров {total}, YIN нашёл тон {found} ({:.0}%), до ноты дошло {pitched} ({:.0}%), лучшая уверенность {:.2}",
+            found as f64 / total.max(1) as f64 * 100.0,
+            pitched as f64 / total.max(1) as f64 * 100.0,
+            loudest,
+        );
+    }
+
     #[test]
     fn silence_gives_empty_bars() {
         let bars = spectrum_bars(&[0.0; WINDOW]);
@@ -866,12 +1020,43 @@ mod tests {
 
     #[test]
     fn out_of_tune_tone_is_not_named() {
-        // Четверть тона выше A4 — это уже не «A» в обиходном смысле.
+        // 452.9 Гц — ровно между A4 и A#4 (по 50 центов до обеих): такую
+        // ноту называть нечем, детектор честно рисует прочерк.
         let between: Vec<f32> = (0..PITCH_WINDOW)
             .map(|index| (2.0 * PI * 452.9 * index as f32 / SAMPLE_RATE as f32).sin())
             .collect();
 
         assert!(detected(&between).is_none());
+    }
+
+    /// Шум монитора: ровный, тихий — полоса на нём висеть не должна.
+    #[test]
+    fn flat_hiss_is_not_a_sound() {
+        let hiss = std::collections::VecDeque::from(vec![0.01_f32; GATE_FRAMES]);
+        assert!(!audible(&hiss, 0.01));
+        // Совсем тихий фрейм — цифровая тишина, тут сомнений нет.
+        assert!(!audible(&hiss, 0.001));
+    }
+
+    /// Музыка: уровень пляшет — даже средний по громкости кадр это звук.
+    #[test]
+    fn varying_levels_are_a_sound() {
+        let music: Vec<f32> = (0..GATE_FRAMES)
+            .map(|index| if index % 3 == 0 { 0.006 } else { 0.05 })
+            .collect();
+        let music = std::collections::VecDeque::from(music);
+
+        assert!(audible(&music, 0.05));
+        assert!(audible(&music, 0.006));
+    }
+
+    /// Длинная ровная нота: колебаний нет, но уровень явно музыкальный.
+    #[test]
+    fn loud_flat_tone_is_a_sound() {
+        let tone = std::collections::VecDeque::from(vec![0.12_f32; GATE_FRAMES]);
+        assert!(audible(&tone, 0.12));
+        // Первый кадр ровного тона: в окне ещё тишина, но сам он громкий.
+        assert!(audible(&std::collections::VecDeque::from(vec![0.0; 8]), 0.12));
     }
 
     #[test]
