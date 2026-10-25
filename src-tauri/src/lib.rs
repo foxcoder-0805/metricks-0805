@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod hall;
+pub mod qbt;
 pub mod status;
 
 /// Точка входа приложения.

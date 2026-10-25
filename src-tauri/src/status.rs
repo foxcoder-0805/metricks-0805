@@ -179,6 +179,7 @@ pub struct StatusSnapshot {
     pub opencode: OpenCodeStatus,
     pub music: MusicStatus,
     pub steam: SteamStatus,
+    pub qbt: crate::qbt::QbtStatus,
     pub system: SystemStatus,
     pub focus: FocusStatus,
     pub git: GitStatus,
@@ -205,6 +206,7 @@ pub fn collect() -> StatusSnapshot {
         opencode,
         music: music_status(),
         steam: steam_status(cache),
+        qbt: crate::qbt::qbt_status(),
         system: system_status(),
         focus: focus_status(),
         git,
@@ -739,7 +741,7 @@ fn steam_root() -> Option<PathBuf> {
 
 /// Ищет процесс по имени в `/proc`: Steam не пишет pid-файл, зато его процесс
 /// всегда виден в списке.
-fn process_running(names: &[&str]) -> bool {
+pub(crate) fn process_running(names: &[&str]) -> bool {
     let Ok(entries) = fs::read_dir("/proc") else {
         return false;
     };
@@ -965,7 +967,7 @@ fn days_since_epoch(year: i32, month: i32, day: i32) -> i64 {
     era as i64 * 146_097 + day_of_era as i64 - 719_468
 }
 
-fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
+pub(crate) fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
     let rate = rate.filter(|value| *value > 0.0)?;
 
     Some((remaining as f64 / rate).ceil() as u64)

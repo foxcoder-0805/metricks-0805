@@ -6,6 +6,7 @@ import type {
   NetworkStatus,
   OpenCodeSession,
   OpenCodeStatus,
+  QbtStatus,
   StatusCard,
   StatusSnapshot,
   SteamStatus,
@@ -205,6 +206,43 @@ function steamState(status: SteamStatus): string[] {
   return details.length > 0 ? [status.state || 'запущен', details.join(' · ')] : [status.state || 'запущен']
 }
 
+/** Имя торрента с процентом: «BeamNG.drive by Igruha · 69%». */
+function qbtDownload(status: QbtStatus): string[] {
+  if (!status.installed) return ['не установлен']
+  if (!status.running) return ['не запущен']
+  if (!status.torrent) return [status.state || 'торрентов нет']
+
+  const progress =
+    status.percent === null
+      ? status.torrent
+      : `${status.torrent} · ${Math.round(status.percent)}%`
+  const headline = status.state === 'пауза' ? `${progress} · пауза` : progress
+
+  const details: string[] = []
+  if (status.total > 0) {
+    // Занятых блоков чуть больше полного размера — это округление до блока.
+    const landed = Math.min(status.downloaded, status.total)
+    details.push(`${formatGib(landed)} из ${formatGib(status.total)}`)
+  }
+  if (status.rate !== null) details.push(formatRate(status.rate))
+
+  return details.length > 0
+    ? [truncate(headline, 80), details.join(' · ')]
+    : [truncate(headline, 80)]
+}
+
+function qbtState(status: QbtStatus): string[] {
+  if (!status.installed) return ['не установлен']
+  if (!status.running) return ['не запущен']
+
+  const details: string[] = []
+  if (status.percent !== null) details.push(`${Math.round(status.percent)}%`)
+  if (status.eta !== null) details.push(`осталось ${formatEta(status.eta)}`)
+  if (status.rate !== null) details.push(formatRate(status.rate))
+
+  return details.length > 0 ? [status.state || 'запущен', details.join(' · ')] : [status.state || 'запущен']
+}
+
 function systemMemory(status: SystemStatus): string[] {
   if (!status.available || status.memoryUsed === null || !status.memoryTotal) {
     return ['нет данных о памяти']
@@ -311,6 +349,10 @@ export function sourceLines(source: LiveSource, snapshot: StatusSnapshot | null)
       return steamDownload(snapshot.steam)
     case 'steam.state':
       return steamState(snapshot.steam)
+    case 'qbt.download':
+      return qbtDownload(snapshot.qbt)
+    case 'qbt.state':
+      return qbtState(snapshot.qbt)
     case 'system.memory':
       return systemMemory(snapshot.system)
     case 'system.disk':

@@ -31,6 +31,14 @@ export const appCatalog: AppOption[] = [
     ],
   },
   {
+    id: 'qbt',
+    title: 'qBittorrent',
+    metrics: [
+      { id: 'download', label: 'Загрузка торрента', source: 'qbt.download' },
+      { id: 'state', label: 'Состояние клиента', source: 'qbt.state' },
+    ],
+  },
+  {
     id: 'system',
     title: 'Система',
     metrics: [

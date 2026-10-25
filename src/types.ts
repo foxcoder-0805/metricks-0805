@@ -6,6 +6,8 @@ export type LiveSource =
   | 'music.player'
   | 'steam.download'
   | 'steam.state'
+  | 'qbt.download'
+  | 'qbt.state'
   | 'system.memory'
   | 'system.disk'
   | 'system.load'
@@ -126,6 +128,25 @@ export interface SteamStatus {
   state: string
 }
 
+/** Состояние клиента qBittorrent: читается из резюме и с диска, без WebUI. */
+export interface QbtStatus {
+  installed: boolean
+  running: boolean
+  /** Имя торрента, за которым следит карточка. */
+  torrent: string
+  /** Процент готовности: занятые блоки на диске против полного размера. */
+  percent: number | null
+  /** Сколько байтов реально лежит на диске. */
+  downloaded: number
+  /** Полный размер торрента; 0, если метаданные прочитать не удалось. */
+  total: number
+  /** Скорость роста файлов на диске в байтах в секунду. */
+  rate: number | null
+  /** Сколько секунд осталось при текущей скорости. */
+  eta: number | null
+  state: string
+}
+
 /** Память, диск, нагрузка и время работы машины. */
 export interface SystemStatus {
   available: boolean
@@ -188,6 +209,7 @@ export interface StatusSnapshot {
   opencode: OpenCodeStatus
   music: MusicStatus
   steam: SteamStatus
+  qbt: QbtStatus
   system: SystemStatus
   focus: FocusStatus
   git: GitStatus
