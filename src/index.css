@@ -632,6 +632,45 @@ button {
   box-shadow: 0 0 18px rgba(216, 180, 254, 0.75);
 }
 
+/* Фортепиано вместо полосы: играет эталонный трек. Клавиши во всю ширину,
+   чёрные короче и висят сверху — как на настоящей клавиатуре. */
+.piano {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 56px;
+}
+
+.piano__key {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(180deg, #fbfaff 0%, #dcd7e8 100%);
+  box-shadow: inset 0 -3px 5px rgba(23, 20, 31, 0.22);
+}
+
+.piano__key--black {
+  z-index: 2;
+  bottom: 42%;
+  background: linear-gradient(180deg, #46405a 0%, #17141f 100%);
+  box-shadow: inset 0 -3px 4px rgba(0, 0, 0, 0.55);
+}
+
+/* По таймлайну эта нота звучит сейчас — клавиша нажата. */
+.piano__key--on {
+  background: linear-gradient(180deg, var(--purple-100), var(--purple-300));
+  box-shadow:
+    0 0 16px rgba(168, 85, 247, 0.7),
+    inset 0 -3px 5px rgba(23, 20, 31, 0.18);
+}
+
+/* А её же слышит живой детектор — белый ободок поверх нажатия. */
+.piano__key--heard {
+  box-shadow:
+    0 0 18px rgba(216, 180, 254, 0.95),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.92);
+}
+
 .statusbar {
   display: flex;
   flex: 0 0 auto;

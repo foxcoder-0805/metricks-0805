@@ -78,6 +78,9 @@ pub struct MusicStatus {
     pub player: String,
     /// Адрес трека (`xesam:url`): по нему узнаётся эталонный трек.
     pub url: String,
+    /// Трек опознан как эталонный: пока он играет, полоса спектра
+    /// заменяется фортепиано с нотами из [crate::hall] таймлайна.
+    pub reference: bool,
     /// Ожидаемые ноты эталонного трека на текущей позиции. Для чужого звука
     /// список пуст — там работает только живой детектор.
     pub expected_notes: Vec<String>,
@@ -176,6 +179,7 @@ pub struct StatusSnapshot {
     pub opencode: OpenCodeStatus,
     pub music: MusicStatus,
     pub steam: SteamStatus,
+    pub qbt: crate::qbt::QbtStatus,
     pub system: SystemStatus,
     pub focus: FocusStatus,
     pub git: GitStatus,
@@ -202,6 +206,7 @@ pub fn collect() -> StatusSnapshot {
         opencode,
         music: music_status(),
         steam: steam_status(cache),
+        qbt: crate::qbt::qbt_status(),
         system: system_status(),
         focus: focus_status(),
         git,
@@ -696,14 +701,12 @@ fn music_status() -> MusicStatus {
         return MusicStatus::default();
     };
 
-    // Ожидаемые ноты есть только у эталонного трека: для чужого звука на
-    // экране работает один живой детектор, совпадать не с чем.
+    // Флаг эталонного трека решает, чем рисуется подвал — фортепиано или
+    // полосой спектра, — а ожидаемые ноты есть только у него: для чужого
+    // звука на экране работает один живой детектор, совпадать не с чем.
     let duration_secs = player.duration_ms.map(|ms| ms as f64 / 1000.0);
-    let expected_notes = if crate::hall::is_reference_track(
-        &player.url,
-        &player.title,
-        duration_secs,
-    ) {
+    let reference = crate::hall::is_reference_track(&player.url, &player.title, duration_secs);
+    let expected_notes = if reference {
         crate::hall::expected_note_labels(player.position_ms.unwrap_or(0) as f64 / 1000.0)
     } else {
         Vec::new()
@@ -718,6 +721,7 @@ fn music_status() -> MusicStatus {
         playing: player.playing,
         player: player.name,
         url: player.url,
+        reference,
         expected_notes,
     }
 }
@@ -737,7 +741,7 @@ fn steam_root() -> Option<PathBuf> {
 
 /// Ищет процесс по имени в `/proc`: Steam не пишет pid-файл, зато его процесс
 /// всегда виден в списке.
-fn process_running(names: &[&str]) -> bool {
+pub(crate) fn process_running(names: &[&str]) -> bool {
     let Ok(entries) = fs::read_dir("/proc") else {
         return false;
     };
@@ -963,7 +967,7 @@ fn days_since_epoch(year: i32, month: i32, day: i32) -> i64 {
     era as i64 * 146_097 + day_of_era as i64 - 719_468
 }
 
-fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
+pub(crate) fn eta_seconds(remaining: u64, rate: Option<f64>) -> Option<u64> {
     let rate = rate.filter(|value| *value > 0.0)?;
 
     Some((remaining as f64 / rate).ceil() as u64)

@@ -23,4 +23,10 @@ export const builtinCards: StatusCard[] = [
     lines: ['смотрим логи'],
     source: 'steam.download',
   },
+  {
+    id: 'qbt',
+    title: 'qBittorrent',
+    lines: ['смотрим BT_backup'],
+    source: 'qbt.download',
+  },
 ]

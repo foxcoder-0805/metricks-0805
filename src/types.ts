@@ -6,6 +6,8 @@ export type LiveSource =
   | 'music.player'
   | 'steam.download'
   | 'steam.state'
+  | 'qbt.download'
+  | 'qbt.state'
   | 'system.memory'
   | 'system.disk'
   | 'system.load'
@@ -89,10 +91,25 @@ export interface MusicStatus {
   /** Адрес трека (`xesam:url`) — по нему узнаётся эталонный трек. */
   url: string
   /**
+   * Трек опознан как эталонный (`great_music.mp3` той же длительности):
+   * пока он играет, полоса спектра заменяется фортепиано.
+   */
+  reference: boolean
+  /**
    * Ожидаемые ноты эталонного трека на текущей позиции. Для чужого звука
    * список пуст — там работает только живой детектор.
    */
   expectedNotes: string[]
+}
+
+/** Нота эталонного таймлайна: начало и длительность в секундах, высота в MIDI. */
+export interface HallNote {
+  /** Момент касания в секундах от начала трека. */
+  t: number
+  /** Длительность звучания в секундах. */
+  d: number
+  /** Высота ноты: 60 = C4. */
+  m: number
 }
 
 /** Состояние клиента Steam. */
@@ -105,6 +122,25 @@ export interface SteamStatus {
   downloaded: number | null
   total: number | null
   /** Скорость в байтах в секунду. */
+  rate: number | null
+  /** Сколько секунд осталось при текущей скорости. */
+  eta: number | null
+  state: string
+}
+
+/** Состояние клиента qBittorrent: читается из резюме и с диска, без WebUI. */
+export interface QbtStatus {
+  installed: boolean
+  running: boolean
+  /** Имя торрента, за которым следит карточка. */
+  torrent: string
+  /** Процент готовности: занятые блоки на диске против полного размера. */
+  percent: number | null
+  /** Сколько байтов реально лежит на диске. */
+  downloaded: number
+  /** Полный размер торрента; 0, если метаданные прочитать не удалось. */
+  total: number
+  /** Скорость роста файлов на диске в байтах в секунду. */
   rate: number | null
   /** Сколько секунд осталось при текущей скорости. */
   eta: number | null
@@ -173,6 +209,7 @@ export interface StatusSnapshot {
   opencode: OpenCodeStatus
   music: MusicStatus
   steam: SteamStatus
+  qbt: QbtStatus
   system: SystemStatus
   focus: FocusStatus
   git: GitStatus
