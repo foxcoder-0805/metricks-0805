@@ -14,7 +14,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             status::get_status,
-            audio::get_audio_bars
+            audio::get_audio_bars,
+            hall::get_reference_timeline
         ])
         .run(tauri::generate_context!())
         .expect("не удалось запустить приложение Metricks");

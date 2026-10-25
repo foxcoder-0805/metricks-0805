@@ -106,6 +106,15 @@ pub fn is_reference_track(url: &str, title: &str, duration_secs: Option<f64>) ->
     named && length
 }
 
+/// Tauri-команда: весь таймлайн эталонного трека. Фронтенд забирает его один
+/// раз, когда трек опознан, и дальше сам считает активные ноты по
+/// интерполированной позиции — гонять 3287 нот через IPC на каждый кадр
+/// незачем, плеер опрашивается раз в секунду.
+#[tauri::command]
+pub fn get_reference_timeline() -> Vec<NoteEvent> {
+    hall_notes().to_vec()
+}
+
 /// Белая клавиша `index` (0 = A0) и её MIDI-номер.
 fn white_midi(index: i32) -> Option<i32> {
     const STEP: [i32; 7] = [0, 2, 3, 5, 7, 8, 10];
@@ -334,6 +343,16 @@ mod tests {
     const MATCH_TOLERANCE_S: f64 = 0.3;
     /// Доля совпадений YIN с эталоном, ниже которой сверка считается провалом.
     const MIN_MATCH_RATE: f64 = 0.6;
+
+    /// Команда отдаёт фронтенду тот же таймлайн, в том же порядке: клавиши
+    /// фортепиано считают активные ноты по этому списку.
+    #[test]
+    fn timeline_command_returns_notes_in_order() {
+        let timeline = super::get_reference_timeline();
+
+        assert_eq!(timeline.len(), hall_notes().len());
+        assert!(timeline.windows(2).all(|pair| pair[0].t <= pair[1].t));
+    }
 
     #[test]
     fn white_keys_cover_the_whole_piano() {

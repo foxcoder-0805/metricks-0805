@@ -78,6 +78,9 @@ pub struct MusicStatus {
     pub player: String,
     /// Адрес трека (`xesam:url`): по нему узнаётся эталонный трек.
     pub url: String,
+    /// Трек опознан как эталонный: пока он играет, полоса спектра
+    /// заменяется фортепиано с нотами из [crate::hall] таймлайна.
+    pub reference: bool,
     /// Ожидаемые ноты эталонного трека на текущей позиции. Для чужого звука
     /// список пуст — там работает только живой детектор.
     pub expected_notes: Vec<String>,
@@ -696,14 +699,12 @@ fn music_status() -> MusicStatus {
         return MusicStatus::default();
     };
 
-    // Ожидаемые ноты есть только у эталонного трека: для чужого звука на
-    // экране работает один живой детектор, совпадать не с чем.
+    // Флаг эталонного трека решает, чем рисуется подвал — фортепиано или
+    // полосой спектра, — а ожидаемые ноты есть только у него: для чужого
+    // звука на экране работает один живой детектор, совпадать не с чем.
     let duration_secs = player.duration_ms.map(|ms| ms as f64 / 1000.0);
-    let expected_notes = if crate::hall::is_reference_track(
-        &player.url,
-        &player.title,
-        duration_secs,
-    ) {
+    let reference = crate::hall::is_reference_track(&player.url, &player.title, duration_secs);
+    let expected_notes = if reference {
         crate::hall::expected_note_labels(player.position_ms.unwrap_or(0) as f64 / 1000.0)
     } else {
         Vec::new()
@@ -718,6 +719,7 @@ fn music_status() -> MusicStatus {
         playing: player.playing,
         player: player.name,
         url: player.url,
+        reference,
         expected_notes,
     }
 }

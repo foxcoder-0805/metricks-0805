@@ -4,7 +4,7 @@
 
 Desktop status dashboard built with [Tauri v2](https://tauri.app), React 19, TypeScript and Vite.
 
-Dark UI with purple accents and rounded cards. The header carries a pill with the login of the current session. When something plays, a cava-style spectrum bar fills the room left between the cards and the status bar, and above the bars runs a trail of the recognised notes. The board draws one card per open OpenCode session — each shows what that session is doing right now — next to what music is playing and how far a Steam download has gone, plus a tile that adds more cards. Every metric in the catalog is read from the machine (memory, disk, the focused window, git, the network), so there are no placeholder captions. Card captions come from the machine itself, not from a backend.
+Dark UI with purple accents and rounded cards. The header carries a pill with the login of the current session. When something plays, a cava-style spectrum bar fills the room left between the cards and the status bar, and above the bars runs a trail of the recognised notes; while the reference track "great_music.mp3" plays, that bar turns into a piano keyboard lit note by note from the video's own timeline. The board draws one card per open OpenCode session — each shows what that session is doing right now — next to what music is playing and how far a Steam download has gone, plus a tile that adds more cards. Every metric in the catalog is read from the machine (memory, disk, the focused window, git, the network), so there are no placeholder captions. Card captions come from the machine itself, not from a backend.
 
 ## Requirements
 
@@ -52,7 +52,7 @@ The dashboard works fully offline: there is no backend and no network calls. The
 | Card | Source |
 | --- | --- |
 | OpenCode | `~/.local/share/opencode/opencode.db` — every session touched in the last day, newest first: title, last request, model, and what the session is doing right now (a running tool, thinking, or waiting) read from the last assistant message |
-| Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist, `xesam:url` and position in milliseconds; for the reference track the card's neighbours in the spectrum row also get the [expected notes](#ground-truth) of the current position |
+| Music | MPRIS over the D-Bus session bus — the first playing player, its track, artist, `xesam:url` and position in milliseconds, plus a `reference` flag for `great_music.mp3` of the same length: while it plays the spectrum bar is replaced by the [piano keyboard](#ground-truth), and the card's neighbours get the expected notes of the current position |
 | Steam | Steam process, `steamapps/appmanifest_<id>.acf` (all libraries from `libraryfolders.vdf`) for the game, downloaded bytes and total size, plus `logs/content_log.txt` for the download rate — percent, speed in MB/s and time left are computed from them |
 | System | `/proc/meminfo` (used memory), `/proc/loadavg`, `/proc/uptime` and `df -B1 /` (root disk usage) |
 | Window | `hyprctl activewindow -j` — the class, title and workspace of the focused window |
@@ -95,6 +95,8 @@ METRICKS_TRACK=~/Music/track.mp3 cargo test --release --lib -- --ignored --nocap
 ## Ground truth
 
 The dashboard ships a real note timeline for one track: "In the Hall of the Mountain King" as performed in the Kassia video. It lives in `data/hall_of_the_mountain_king.json` as `{"t":…,"d":…,"m":…}` events (start in seconds, duration, MIDI note) and is compiled into the binary with `include_str!`. The 75 MB video itself is never committed — `.gitignore` excludes `*.mp4`, and only this derived JSON (a few tens of KB) is in the repo.
+
+The same events reach the frontend through the `get_reference_timeline` command — one fetch per session, not per frame. The piano interpolates the player position from the snapshot's timestamp between the once-a-second status polls, so the keys change with the music rather than once a second, and every new snapshot resynchronises the clock.
 
 The timeline is extracted from the video by `src-tauri/src/hall.rs`, which pipes frames through `ffmpeg` (`crop=1920:101:0:440`, gray rawvideo) and reads the falling blocks on one detection row:
 
@@ -154,5 +156,5 @@ Design tokens are defined in `src/theme.css`. Dark background `#0B0A12`, purple 
 - Top row: the brand and a pill with the login of the current session on the right.
 - Cards: one per open OpenCode session, plus music, Steam, and any cards you add. Each one has a large keyword in the top left corner, a round cross in the top right corner and a caption in the bottom left corner. Captions refresh every second.
 - The cross in the top right corner hides the card. Hidden cards are remembered until the app is restarted, and the status bar offers a link to bring them back.
-- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars, and the bar of the note being heard is highlighted. While the reference track plays, the expected notes from the video timeline sit ghosted on the left of the trail, so the heard notes and the sheet of the screen can be compared at a glance.
+- Bottom of the window: a cava-style spectrum bar of the system sound, stretched to the free height between the cards and the status bar. It is hidden while nothing plays and fades in as soon as audio is heard; a trail of recognised notes runs above the bars, and the bar of the note being heard is highlighted. While `great_music.mp3` plays, the bar gives way to an 88-key piano keyboard (A0…C8): the keys of the notes the [timeline](#ground-truth) says are sounding now glow purple, and a key the live detector actually hears is outlined in white, so the screen and the sound can be compared at a glance. The player position is interpolated locally between the once-a-second polls; if the timeline has not arrived yet, the row of expected notes above the cava bars is the fallback.
 - Last tile: a `+` tile. Clicking it opens a dialog where you pick an application and what to track for it — the new card is added with the caption of the selected metric. Every metric is live and marked "с машины" in the dialog.

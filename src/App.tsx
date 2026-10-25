@@ -65,7 +65,8 @@ export default function App() {
 
         <AudioVisualizer
           frame={audio}
-          expected={snapshot?.music.expectedNotes ?? []}
+          music={snapshot?.music ?? null}
+          collectedAt={snapshot?.collectedAt ?? null}
         />
 
         <footer className="statusbar">
